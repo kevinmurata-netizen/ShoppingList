@@ -50,7 +50,7 @@ Omitting `--tursodb` selects libSQL. The last command displays a secret; copy it
 8. Click the deploy/apply button. Wait for the web service to report **Live**. The first dependency installation and build can take several minutes.
 9. Open the web service's HTTPS `…onrender.com` address shown by Render. The exact hostname is assigned by Render; it is not included in this guide.
 
-If you accidentally use **New Web Service** instead of Blueprint, the equivalent manual settings are: Node runtime, `main` branch, repository root as Root Directory, Free instance, build command `npm ci --no-audit --no-fund && npm run build`, start command `npm start`, and health check `/api/health`. Set `NODE_VERSION=24`, `NODE_ENV=production`, `REQUIRE_REMOTE_DATABASE=true`, plus the two Turso values above. Do not deploy using SQLite-only settings on Render Free.
+If you accidentally use **New Web Service** instead of Blueprint, the equivalent manual settings are: Node runtime, `main` branch, repository root as Root Directory, Free instance, build command `npm ci --include=dev --no-audit --no-fund && npm run build`, start command `npm start`, and health check `/api/health`. Set `NODE_VERSION=24`, `NODE_ENV=production`, `REQUIRE_REMOTE_DATABASE=true`, plus the two Turso values above. Do not deploy using SQLite-only settings on Render Free.
 
 ## 4. Check the hosted app before using it
 
@@ -79,6 +79,7 @@ The code has been tested locally, including its libSQL storage adapter. A succes
 ## If deployment fails
 
 - **Repository/file not found:** Check that Render can access ShoppingList, uses `main`, and sees `render.yaml` and `package.json` at the root.
+- **`vite: not found`:** The build must install development dependencies even in production mode. Confirm the Build Command is `npm ci --include=dev --no-audit --no-fund && npm run build`. For an existing Blueprint, sync the latest `main` configuration before redeploying.
 - **Storage startup failed:** Check the two Turso values in Render's Environment settings, the database engine (libSQL), token permissions/expiration, and the database's active status. Save the correction and redeploy/restart. Keep token values out of shared logs and screenshots.
 - **List missing after restart:** Confirm `REQUIRE_REMOTE_DATABASE=true` and both Turso values are present. A correct deployment refuses to start without remote storage. Make sure you are opening the same family link.
 - **Family member sees an empty list:** Send the complete family `/l/…` link again. Starting from the homepage on a new device can create a different list.

@@ -55,7 +55,7 @@ The development cloud environment is not public app hosting. To use Family Cart 
 
 1. Save this project to your GitHub repository.
 2. Choose a host that supports Node.js 24 or the included Dockerfile and WebSockets. SQLite-only deployments also need a persistent disk. No hosting account or paid service has been created by this project.
-3. Use `npm ci && npm run build` as the build command and `npm start` as the start command, or deploy the Dockerfile. Set `NODE_ENV=production`. For Turso, set the two credentials and `REQUIRE_REMOTE_DATABASE=true` as described above. For local SQLite, set `DATA_PATH` to a file on a writable persistent disk, for example `/app/data/family-cart.sqlite`.
+3. Use `npm ci --include=dev && npm run build` as the build command and `npm start` as the start command, or deploy the Dockerfile. The build needs development dependencies such as Vite even when `NODE_ENV=production`. For Turso, set the two credentials and `REQUIRE_REMOTE_DATABASE=true` as described above. For local SQLite, set `DATA_PATH` to a file on a writable persistent disk, for example `/app/data/family-cart.sqlite`.
 4. Enable HTTPS through the host. Check `/api/health`, open the app, add an item, and send **Share list** to another phone. Check an item off on that phone and verify the first phone updates.
 5. Restart the hosted app once and verify the list is retained before using it for real shopping.
 6. On iPhone, open the family link in Safari → Share → Add to Home Screen. On Android, open it in Chrome → menu → Add to home screen / Install app. Share the list link before adding to the home screen so all devices open the same list.

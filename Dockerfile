@@ -4,7 +4,7 @@ COPY package.json package-lock.json ./
 # Optional extra_ca is a trusted corporate/proxy CA, never a verification bypass.
 RUN --mount=type=secret,id=extra_ca \
     if [ -f /run/secrets/extra_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra_ca; fi; \
-    npm ci --no-audit --no-fund --fetch-retries=1 --fetch-timeout=30000
+    npm ci --include=dev --no-audit --no-fund --fetch-retries=1 --fetch-timeout=30000
 COPY index.html vite.config.js ./
 COPY src ./src
 COPY public ./public
