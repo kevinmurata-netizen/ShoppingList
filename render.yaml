@@ -1,0 +1,22 @@
+# Render's free web service + a separate Turso libSQL database.
+# The two database values are entered privately during Blueprint setup.
+services:
+  - type: web
+    name: family-cart
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci --no-audit --no-fund && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: REQUIRE_REMOTE_DATABASE
+        value: "true"
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false

@@ -1,0 +1,13 @@
+services:
+  family-cart:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATA_PATH: /app/data/family-cart.sqlite
+    volumes:
+      - shopping-data:/app/data
+    restart: unless-stopped
+volumes:
+  shopping-data:
