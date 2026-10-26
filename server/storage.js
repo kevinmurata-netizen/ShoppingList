@@ -14,10 +14,19 @@ const schema = `
     bought INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, bought_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS items_list ON items(list_token);
+  CREATE TABLE IF NOT EXISTS usual_items (
+    list_token TEXT NOT NULL REFERENCES lists(token) ON DELETE CASCADE,
+    name_key TEXT NOT NULL, store TEXT NOT NULL, name TEXT NOT NULL,
+    quantity INTEGER NOT NULL, note TEXT NOT NULL, last_bought INTEGER NOT NULL,
+    PRIMARY KEY (list_token, name_key, store)
+  );
+  CREATE INDEX IF NOT EXISTS usuals_recent ON usual_items(list_token, last_bought DESC);
 `;
 const listQuery = "SELECT * FROM lists WHERE token = ?";
 const itemsQuery =
   "SELECT * FROM items WHERE list_token = ? ORDER BY created_at, id";
+const usualsQuery =
+  "SELECT * FROM usual_items WHERE list_token = ? ORDER BY last_bought DESC, name_key, store LIMIT 200";
 
 // Exported so the same application tests can exercise a real libSQL client.
 export async function createLibsqlStorage(client) {
@@ -43,14 +52,15 @@ export async function createLibsqlStorage(client) {
       };
     },
     async readList(token) {
-      const [list, items] = await client.batch(
+      const [list, items, usuals] = await client.batch(
         [
           { sql: listQuery, args: [token] },
           { sql: itemsQuery, args: [token] },
+          { sql: usualsQuery, args: [token] },
         ],
         "read",
       );
-      return { list: list.rows[0], items: items.rows };
+      return { list: list.rows[0], items: items.rows, usuals: usuals.rows };
     },
     async batchWrite(statements) {
       return (await client.batch(statements, "write")).map((result) => ({
@@ -122,6 +132,7 @@ export async function openStorage({
       return {
         list: db.prepare(listQuery).get(token),
         items: db.prepare(itemsQuery).all(token),
+        usuals: db.prepare(usualsQuery).all(token),
       };
     },
     batchWrite(statements) {

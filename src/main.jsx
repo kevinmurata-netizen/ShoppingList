@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardList,
+  ListChecks,
   Copy,
   Heart,
   Link,
@@ -29,9 +30,16 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
+import "./catalog.css";
+import CatalogPicker from "./CatalogPicker.jsx";
+import { STORES } from "../shared/items.js";
 
-const STORES = ["Costco", "Walmart", "Target", "Safeway", "Other"];
-const emptyList = { title: "Our family list", version: 0, items: [] };
+const emptyList = {
+  title: "Our family list",
+  version: 0,
+  items: [],
+  usuals: [],
+};
 const readSaved = (key) => {
   try {
     return localStorage.getItem(key);
@@ -176,7 +184,7 @@ function BasketDrawing({ small = false }) {
   );
 }
 
-function Modal({ title, children, onClose, wide = false }) {
+function Modal({ title, children, onClose, wide = false, locked = false }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const previous = document.activeElement;
@@ -191,9 +199,12 @@ function Modal({ title, children, onClose, wide = false }) {
     <dialog
       ref={dialogRef}
       className={`modal ${wide ? "wide" : ""}`}
-      onCancel={onClose}
+      onCancel={(e) => {
+        if (locked) e.preventDefault();
+        else onClose();
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) {
+        if (!locked && e.target === e.currentTarget) {
           const rect = e.currentTarget.getBoundingClientRect();
           if (
             e.clientX < rect.left ||
@@ -210,6 +221,7 @@ function Modal({ title, children, onClose, wide = false }) {
         <button
           className="icon-button"
           aria-label="Close dialog"
+          disabled={locked}
           onClick={onClose}
         >
           <X size={21} />
@@ -546,6 +558,30 @@ function App() {
       setAdding(false);
     }
   }
+  async function pickItems(items, preferredStore) {
+    setModalBusy(true);
+    try {
+      const data = await mutate("/pick", "POST", { items });
+      const count = data.pickResult.added + data.pickResult.restored;
+      setTab("needed");
+      if (
+        filter !== "All stores" &&
+        items.some((item) => item.store !== filter)
+      )
+        setFilter("All stores");
+      setQuery("");
+      setStore(preferredStore);
+      saveLocal("family-cart-store", preferredStore);
+      setToast(
+        count
+          ? `${count} ${count === 1 ? "item" : "items"} added to your list`
+          : "Those items are already on your list",
+      );
+      setModal(null);
+    } finally {
+      setModalBusy(false);
+    }
+  }
   async function toggle(item) {
     if (busyItems.has(item.id)) return;
     setBusyItems((current) => new Set(current).add(item.id));
@@ -778,6 +814,23 @@ function App() {
                 <div style={{ width: `${percentage}%` }} />
               </div>
             </div>
+          </section>
+
+          <section className="quick-pick" aria-label="Choose groceries">
+            <span className="quick-pick-icon">
+              <ListChecks size={26} strokeWidth={1.6} />
+            </span>
+            <div>
+              <h2>Less typing. More ticking.</h2>
+              <p>Pick everyday essentials or bring back your usuals.</p>
+            </div>
+            <button
+              className="button primary"
+              disabled={unavailable}
+              onClick={() => openModal("catalog")}
+            >
+              <ShoppingBasket size={17} /> Choose items
+            </button>
           </section>
 
           <section className="composer-section" aria-label="Add an item">
@@ -1195,6 +1248,21 @@ function App() {
         </div>
       )}
 
+      {modal === "catalog" && (
+        <Modal
+          title="What do we need?"
+          wide
+          locked={modalBusy}
+          onClose={() => setModal(null)}
+        >
+          <CatalogPicker
+            list={list}
+            initialStore={filter === "All stores" ? store : filter}
+            onAdd={pickItems}
+            unavailable={unavailable}
+          />
+        </Modal>
+      )}
       {modal === "share" && (
         <Modal
           title="Good lists are better shared."
@@ -1332,7 +1400,8 @@ function App() {
           <p className="modal-description">
             Remove all {bought.length} bought{" "}
             {bought.length === 1 ? "item" : "items"} from the family list? Items
-            still to buy will stay. This can’t be undone.
+            still to buy will stay. Recent purchases stay in Your usuals for
+            next time.
           </p>
           {modalError && (
             <p className="form-error" role="alert">

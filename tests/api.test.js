@@ -241,10 +241,157 @@ for (const backend of ["sqlite", "libsql", ...(httpTestUrl ? ["http"] : [])]) {
         const persisted = result.data.items.find((item) => item.id === id);
         assert.equal(persisted.bought, true);
         assert.equal(persisted.note, "Remember this one");
+        assert.equal(result.data.usuals[0].note, "Remember this one");
       } finally {
         if (current) await current.application.close();
         await rm(directory, { recursive: true, force: true });
       }
+    });
+
+    test("catalog picks add together, preserve stores, and avoid duplicates across concurrent family requests", async (t) => {
+      const { api, create } = await fixture(t);
+      const { token } = await create();
+      const path = `/api/lists/${token}`;
+      const pick = (items) => api(`${path}/pick`, "POST", { items });
+      const first = await pick([
+        { name: " Milk ", store: "Costco" },
+        { name: "MILK", store: "Costco" },
+        { name: "Milk", store: "Safeway" },
+        {
+          name: "Paper towels",
+          store: "Costco",
+          quantity: 2,
+          note: "Big pack",
+        },
+      ]);
+      assert.equal(first.status, 200);
+      assert.equal(first.data.items.length, 3);
+      assert.deepEqual(first.data.pickResult, {
+        added: 3,
+        restored: 0,
+        alreadyNeeded: 0,
+      });
+      const repeats = await Promise.all([
+        pick([
+          { name: "milk", store: "Costco" },
+          { name: "Eggs", store: "Costco" },
+        ]),
+        pick([{ name: "Eggs", store: "Costco" }]),
+      ]);
+      assert.ok(repeats.every((result) => result.status === 200));
+      const saved = (await api(path)).data;
+      assert.equal(saved.items.length, 4);
+      assert.equal(
+        saved.items.filter((item) => item.name === "Eggs").length,
+        1,
+      );
+      assert.ok(saved.items.every((item) => !item.bought));
+    });
+
+    test("usuals retain family quantities and notes after clearing purchases and stay private to the list", async (t) => {
+      const { api, create } = await fixture(t);
+      const one = await create();
+      const two = await create();
+      const path = `/api/lists/${one.token}`;
+      let result = await api(`${path}/pick`, "POST", {
+        items: [
+          {
+            name: "Family snack",
+            store: "Walmart",
+            quantity: 3,
+            note: "Peanut free",
+          },
+        ],
+      });
+      const item = result.data.items[0];
+      result = await api(`${path}/items/${item.id}`, "PATCH", { bought: true });
+      assert.equal(result.data.usuals[0].name, "Family snack");
+      assert.equal(result.data.usuals[0].quantity, 3);
+      assert.ok(result.data.usuals[0].lastBought);
+      result = await api(`${path}/completed`, "DELETE");
+      assert.equal(result.data.items.length, 0);
+      assert.equal(result.data.usuals[0].note, "Peanut free");
+      assert.equal(
+        (await api(`/api/lists/${two.token}`)).data.usuals.length,
+        0,
+      );
+      result = await api(`${path}/pick`, "POST", {
+        items: result.data.usuals.map(({ name, store, quantity, note }) => ({
+          name,
+          store,
+          quantity,
+          note,
+        })),
+      });
+      assert.equal(result.data.items[0].quantity, 3);
+      assert.equal(result.data.items[0].note, "Peanut free");
+      assert.equal(result.data.items[0].store, "Walmart");
+      await api(`${path}/items/${result.data.items[0].id}`, "PATCH", {
+        bought: true,
+      });
+      result = await api(`${path}/pick`, "POST", {
+        items: [{ name: "family snack", store: "Walmart" }],
+      });
+      assert.deepEqual(result.data.pickResult, {
+        added: 0,
+        restored: 1,
+        alreadyNeeded: 0,
+      });
+      assert.equal(result.data.items.length, 1);
+      assert.equal(
+        result.data.items[0].quantity,
+        3,
+        "buying again keeps the previous quantity",
+      );
+      assert.equal(result.data.items[0].note, "Peanut free");
+      assert.equal(result.data.items[0].bought, false);
+    });
+
+    test("invalid catalog batches leave the family list unchanged", async (t) => {
+      const { api, create } = await fixture(t);
+      const { token } = await create();
+      const path = `/api/lists/${token}`;
+      const before = (await api(path)).data.version;
+      for (const items of [
+        [],
+        null,
+        [null],
+        ["Milk"],
+        [{ name: "Milk" }, { name: "" }],
+        [{ name: "Milk", store: "Unknown" }],
+        Array.from({ length: 101 }, () => ({ name: "Milk" })),
+      ]) {
+        assert.equal(
+          (await api(`${path}/pick`, "POST", { items })).status,
+          400,
+        );
+      }
+      const after = (await api(path)).data;
+      assert.equal(after.version, before);
+      assert.equal(after.items.length, 0);
+      assert.equal(after.usuals.length, 0);
+    });
+
+    test("picking groceries broadcasts the same complete batch to another family member", async (t) => {
+      const { base, api, create } = await fixture(t);
+      const { token } = await create();
+      const socket = new WebSocket(
+        `${base.replace("http:", "ws:")}/live/${token}`,
+      );
+      t.after(() => socket.terminate());
+      await once(socket, "message");
+      const update = once(socket, "message");
+      const result = await api(`/api/lists/${token}/pick`, "POST", {
+        items: [
+          { name: "Apples", store: "Costco" },
+          { name: "Coffee", store: "Target" },
+        ],
+      });
+      const [message] = await update;
+      const received = JSON.parse(message);
+      assert.equal(received.version, result.data.version);
+      assert.equal(received.items.length, 2);
+      assert.deepEqual(received.items, result.data.items);
     });
   });
 }

@@ -1,5 +1,5 @@
 // Keep the shell available for a helpful offline screen. Lists are never cached.
-const CACHE = "family-cart-shell-v1";
+const CACHE = "family-cart-shell-v2";
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {

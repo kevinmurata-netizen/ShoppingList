@@ -4,6 +4,9 @@ A phone-friendly shopping list for a family that’s tired of keeping groceries 
 
 ## What it does
 
+- Tap **Choose items** to search 116 grocery and household essentials, browse categories, and check several things to add together. Choose Costco, Walmart, Target, Safeway, or Other as you pick.
+- Reuse **Your usuals**: recent family purchases keep their store, quantity, and notes, even after clearing Bought. These are shared with the family, not just saved on one phone.
+- Review **Selected** before adding. Items already needed are marked, concurrent family picks do not create extra copies, and bought items can be added again with their details intact.
 - Add an item as soon as you think of it. Costco is the initial default; your last selected store is remembered on your device.
 - Organize by Costco, Walmart, Target, Safeway, or Other; search item names and notes.
 - Add quantities, brands, pack sizes, and other notes. Edit or remove an item.
@@ -11,6 +14,10 @@ A phone-friendly shopping list for a family that’s tired of keeping groceries 
 - Share one private link with your family. Changes appear live on connected devices, with automatic reconnection and periodic refresh as a fallback.
 - Keep data through server restarts in SQLite.
 - Install on iPhone or Android using the browser’s “Add to Home Screen” action. An internet connection is required to load and update lists; changes are never silently queued or reported saved while offline.
+
+The essentials catalog contains generic suggestions, not live store inventory. If a search doesn't find something, select **Add as a custom item**, or use the original quick-entry field. Edit an item on the shopping list to change its quantity, note, or store. Checking an item in the catalog selects it to buy; checking it on the shopping list marks it bought.
+
+The app automatically adds the usuals table to an existing database at startup; list links and shopping items remain in place. Up to 200 recent distinct purchases are retained as usuals. Purchases cleared before this feature was installed cannot be recovered.
 
 ## Develop
 

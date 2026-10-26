@@ -7,6 +7,7 @@ RUN --mount=type=secret,id=extra_ca \
     npm ci --include=dev --no-audit --no-fund --fetch-retries=1 --fetch-timeout=30000
 COPY index.html vite.config.js ./
 COPY src ./src
+COPY shared ./shared
 COPY public ./public
 RUN npm run build
 
@@ -19,6 +20,7 @@ RUN --mount=type=secret,id=extra_ca \
     npm ci --omit=dev --no-audit --no-fund --fetch-retries=1 --fetch-timeout=30000 && mkdir -p /app/data && chown node:node /app/data
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node server ./server
+COPY --chown=node:node shared ./shared
 USER node
 EXPOSE 3000
 VOLUME ["/app/data"]

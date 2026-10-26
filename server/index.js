@@ -7,9 +7,14 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openStorage } from "./storage.js";
+import {
+  STORES as STORE_NAMES,
+  normalizeName,
+  itemKey,
+} from "../shared/items.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const STORES = new Set(["Costco", "Walmart", "Target", "Safeway", "Other"]);
+const STORES = new Set(STORE_NAMES);
 const tokenPattern = /^[A-Za-z0-9_-]{32}$/;
 
 class InputError extends Error {}
@@ -112,18 +117,25 @@ export async function createApplication({
     }
     next();
   });
-  app.use(express.json({ limit: "8kb" }));
+  app.use(express.json({ limit: "64kb" }));
 
   const server = createServer(app);
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 });
   async function snapshot(token) {
-    const { list, items } = await db.readList(token);
+    const { list, items, usuals } = await db.readList(token);
     if (!list) return null;
     return {
       title: list.title,
       version: list.version,
       createdAt: list.created_at,
       updatedAt: list.updated_at,
+      usuals: usuals.map((item) => ({
+        name: item.name,
+        store: item.store,
+        quantity: item.quantity,
+        note: item.note,
+        lastBought: item.last_bought,
+      })),
       items: items.map((item) => ({
         id: item.id,
         name: item.name,
@@ -159,9 +171,31 @@ export async function createApplication({
       }
     };
   }
-  async function persist(token, sql, args) {
+  function remember(token, item, boughtAt = item.bought_at || Date.now()) {
+    return {
+      sql: `INSERT INTO usual_items (list_token, name_key, store, name, quantity, note, last_bought)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(list_token, name_key, store) DO UPDATE SET
+          name = excluded.name, quantity = excluded.quantity, note = excluded.note, last_bought = excluded.last_bought`,
+      args: [
+        token,
+        normalizeName(item.name),
+        item.store,
+        item.name,
+        item.quantity,
+        item.note,
+        boughtAt,
+      ],
+    };
+  }
+  async function persistMany(token, statements) {
     const results = await db.batchWrite([
-      { sql, args },
+      ...statements,
+      {
+        sql: `DELETE FROM usual_items WHERE list_token = ? AND (name_key, store) NOT IN
+          (SELECT name_key, store FROM usual_items WHERE list_token = ? ORDER BY last_bought DESC, name_key, store LIMIT 200)`,
+        args: [token, token],
+      },
       {
         sql: "UPDATE lists SET version = version + 1, updated_at = ? WHERE token = ?",
         args: [Date.now(), token],
@@ -169,14 +203,17 @@ export async function createApplication({
     ]);
     return results[0];
   }
-  async function publish(token, res) {
+  async function persist(token, sql, args, extra = []) {
+    return persistMany(token, [{ sql, args }, ...extra]);
+  }
+  async function publish(token, res, extra = {}) {
     const data = await snapshot(token);
     const message = JSON.stringify(data);
     for (const client of sockets.clients) {
       if (client.listToken === token && client.readyState === WebSocket.OPEN)
         client.send(message);
     }
-    res.json(data);
+    res.json({ ...data, ...extra });
   }
   app.get("/api/health", async (_req, res) => {
     await db.prepare("SELECT 1").get();
@@ -217,12 +254,10 @@ export async function createApplication({
         .prepare("SELECT 1 FROM lists WHERE token = ?")
         .get(req.params.token))
     ) {
-      return res
-        .status(404)
-        .json({
-          error:
-            "This list could not be found. Check the full link with your family.",
-        });
+      return res.status(404).json({
+        error:
+          "This list could not be found. Check the full link with your family.",
+      });
     }
     next();
   });
@@ -242,6 +277,76 @@ export async function createApplication({
     }),
   );
   app.post(
+    "/api/lists/:token/pick",
+    mutation(async (req, res) => {
+      if (
+        !Array.isArray(req.body?.items) ||
+        req.body.items.length < 1 ||
+        req.body.items.length > 100
+      ) {
+        throw new InputError("Choose between 1 and 100 items to add.");
+      }
+      const picks = new Map();
+      for (const entry of req.body.items) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry))
+          throw new InputError("Choose valid items from the catalog.");
+        const item = itemFields(entry);
+        if (!picks.has(itemKey(item))) picks.set(itemKey(item), item);
+      }
+      const current = await db
+        .prepare(
+          "SELECT * FROM items WHERE list_token = ? ORDER BY bought_at DESC, created_at DESC",
+        )
+        .all(req.params.token);
+      const needed = new Set(
+        current.filter((item) => !item.bought).map(itemKey),
+      );
+      const bought = new Map();
+      for (const item of current.filter((item) => item.bought))
+        if (!bought.has(itemKey(item))) bought.set(itemKey(item), item);
+      const statements = [];
+      const result = { added: 0, restored: 0, alreadyNeeded: 0 };
+      for (const [key, item] of picks) {
+        if (needed.has(key)) {
+          result.alreadyNeeded++;
+          continue;
+        }
+        const previous = bought.get(key);
+        if (previous) {
+          statements.push(remember(req.params.token, previous));
+          statements.push({
+            sql: "UPDATE items SET bought = 0, bought_at = NULL WHERE id = ? AND list_token = ?",
+            args: [previous.id, req.params.token],
+          });
+          result.restored++;
+        } else {
+          statements.push({
+            sql: "INSERT INTO items (id, list_token, name, store, quantity, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            args: [
+              randomUUID(),
+              req.params.token,
+              item.name,
+              item.store,
+              item.quantity,
+              item.note,
+              Date.now(),
+            ],
+          });
+          result.added++;
+        }
+      }
+      if (current.length + result.added > 500)
+        return res
+          .status(409)
+          .json({
+            error:
+              "This list is full. Clear some bought items before adding more.",
+          });
+      if (statements.length) await persistMany(req.params.token, statements);
+      await publish(req.params.token, res, { pickResult: result });
+    }),
+  );
+  app.post(
     "/api/lists/:token/items",
     mutation(async (req, res) => {
       const item = itemFields(req.body ?? {});
@@ -249,12 +354,10 @@ export async function createApplication({
         .prepare("SELECT COUNT(*) AS count FROM items WHERE list_token = ?")
         .get(req.params.token);
       if (count >= 500)
-        return res
-          .status(409)
-          .json({
-            error:
-              "This list is full. Clear some bought items before adding more.",
-          });
+        return res.status(409).json({
+          error:
+            "This list is full. Clear some bought items before adding more.",
+        });
       await persist(
         req.params.token,
         "INSERT INTO items (id, list_token, name, store, quantity, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -275,10 +378,14 @@ export async function createApplication({
   app.delete(
     "/api/lists/:token/completed",
     mutation(async (req, res) => {
+      const bought = await db
+        .prepare("SELECT * FROM items WHERE list_token = ? AND bought = 1")
+        .all(req.params.token);
       await persist(
         req.params.token,
         "DELETE FROM items WHERE list_token = ? AND bought = 1",
         [req.params.token],
+        bought.map((item) => remember(req.params.token, item)),
       );
       await publish(req.params.token, res);
     }),
@@ -301,6 +408,17 @@ export async function createApplication({
             ? Date.now()
             : null
           : current.bought_at;
+      const history = item.bought
+        ? [remember(req.params.token, item, boughtAt)]
+        : current.bought
+          ? [remember(req.params.token, current)]
+          : [];
+      if (current.bought && item.bought && itemKey(current) !== itemKey(item)) {
+        history.unshift({
+          sql: "DELETE FROM usual_items WHERE list_token = ? AND name_key = ? AND store = ?",
+          args: [req.params.token, normalizeName(current.name), current.store],
+        });
+      }
       await persist(
         req.params.token,
         "UPDATE items SET name = ?, store = ?, quantity = ?, note = ?, bought = ?, bought_at = ? WHERE id = ? AND list_token = ?",
@@ -314,6 +432,7 @@ export async function createApplication({
           req.params.id,
           req.params.token,
         ],
+        history,
       );
       await publish(req.params.token, res);
     }),
@@ -321,10 +440,18 @@ export async function createApplication({
   app.delete(
     "/api/lists/:token/items/:id",
     mutation(async (req, res) => {
+      const current = await db
+        .prepare("SELECT * FROM items WHERE id = ? AND list_token = ?")
+        .get(req.params.id, req.params.token);
+      if (!current)
+        return res
+          .status(404)
+          .json({ error: "This item was already removed." });
       const result = await persist(
         req.params.token,
         "DELETE FROM items WHERE id = ? AND list_token = ?",
         [req.params.id, req.params.token],
+        current.bought ? [remember(req.params.token, current)] : [],
       );
       if (!result.changes)
         return res
