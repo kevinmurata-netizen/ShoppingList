@@ -128,7 +128,7 @@ test("family usuals keep quantities and notes after bought items are cleared and
   await page
     .getByRole("textbox", { name: "Item name", exact: true })
     .fill("Our favorite granola");
-  await page.getByRole("button", { name: "Quantity & note" }).click();
+  await page.getByRole("button", { name: "Item details" }).click();
   await page.getByRole("button", { name: "Increase quantity" }).click();
   await page
     .getByRole("textbox", { name: "Note for new item" })

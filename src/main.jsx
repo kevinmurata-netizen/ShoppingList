@@ -38,6 +38,9 @@ import { getSyncClient, seedList } from "./sync-client.js";
 import { request } from "./api.js";
 import SyncStatus, { SyncReview } from "./SyncStatus.jsx";
 import "./offline.css";
+import "./aisles.css";
+import { aisleOrderFor, groupItems } from "../shared/categories.js";
+import AisleOrderEditor, { CategoryField } from "./AisleOrderEditor.jsx";
 
 const readSaved = (key) => {
   try {
@@ -212,6 +215,7 @@ function ItemEditor({ item, onSave, onDelete, onClose }) {
   const [store, setStore] = useState(item.store);
   const [quantity, setQuantity] = useState(item.quantity);
   const [note, setNote] = useState(item.note);
+  const [category, setCategory] = useState(item.category || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -220,9 +224,18 @@ function ItemEditor({ item, onSave, onDelete, onClose }) {
     setBusy(true);
     setError("");
     try {
-      const values = { name: name.trim(), store, quantity, note: note.trim() };
+      const values = {
+        name: name.trim(),
+        store,
+        quantity,
+        note: note.trim(),
+        category,
+      };
       const changes = Object.fromEntries(
-        Object.entries(values).filter(([key, value]) => value !== item[key]),
+        Object.entries(values).filter(
+          ([key, value]) =>
+            value !== (key === "category" ? item.category || "" : item[key]),
+        ),
       );
       await onSave(changes, item.fieldVersions || {});
       onClose();
@@ -266,6 +279,11 @@ function ItemEditor({ item, onSave, onDelete, onClose }) {
             />
           </label>
         </div>
+        <CategoryField
+          value={category}
+          onChange={setCategory}
+          disabled={busy}
+        />
         <label>
           Note <span className="optional">optional</span>
           <textarea
@@ -338,6 +356,9 @@ function App() {
   const sync = useFamilyList(token);
   const { list, loaded, loadError, connection } = sync;
   const [filter, setFilter] = useState("All stores");
+  const [grouped, setGrouped] = useState(
+    () => readSaved("family-cart-group-categories") === "true",
+  );
   const [tab, setTab] = useState("needed");
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -349,6 +370,7 @@ function App() {
   );
   const [quantity, setQuantity] = useState(1);
   const [note, setNote] = useState("");
+  const [category, setCategory] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -421,6 +443,9 @@ function App() {
     } else if (path === "") {
       type = "rename";
       payload = { ...body, before: baseline };
+    } else if (path === "/aisle-order") {
+      type = "aisleOrder";
+      payload = { ...body, before: baseline };
     } else if (path === "/favorites") {
       type = "favorite";
       payload = { ...body, before: baseline };
@@ -458,10 +483,12 @@ function App() {
         store,
         quantity,
         note,
+        category,
       });
       saveLocal("family-cart-store", store);
       setName("");
       setNote("");
+      setCategory("");
       setQuantity(1);
       setDetailsOpen(false);
       setTab("needed");
@@ -549,11 +576,20 @@ function App() {
     .filter(
       (item) =>
         (filter === "All stores" || item.store === filter) &&
-        `${item.name} ${item.note}`.toLowerCase().includes(query.toLowerCase()),
+        `${item.name} ${item.note} ${item.category || ""}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
     )
     .sort((a, b) =>
       tab === "bought" ? b.boughtAt - a.boughtAt : a.createdAt - b.createdAt,
     );
+  const displayGroups = grouped
+    ? groupItems(visible, aisleOrderFor(list, filter))
+    : [{ category: null, items: visible }];
+  function changeGrouping(value) {
+    setGrouped(value);
+    saveLocal("family-cart-group-categories", String(value));
+  }
   const percentage = list.items.length
     ? Math.round((bought.length / list.items.length) * 100)
     : 0;
@@ -837,6 +873,12 @@ function App() {
                       </button>
                     </div>
                   </label>
+                  <CategoryField
+                    value={category}
+                    onChange={setCategory}
+                    disabled={adding}
+                    label="Category for new item"
+                  />
                   <label className="note-field">
                     A note, if you need one
                     <input
@@ -862,8 +904,8 @@ function App() {
                 aria-expanded={detailsOpen}
                 disabled={adding || unavailable}
               >
-                {detailsOpen ? <Minus size={13} /> : <Plus size={13} />}{" "}
-                Quantity & note
+                {detailsOpen ? <Minus size={13} /> : <Plus size={13} />} Item
+                details
               </button>
             </div>
           </section>
@@ -969,6 +1011,24 @@ function App() {
                 )}
               </div>
             )}
+            <div className="aisle-toolbar">
+              <label className="group-toggle">
+                <input
+                  type="checkbox"
+                  checked={grouped}
+                  onChange={(e) => changeGrouping(e.target.checked)}
+                  disabled={unavailable}
+                />
+                Group by category
+              </label>
+              <button
+                className="text-button"
+                disabled={unavailable}
+                onClick={() => openModal("aisles")}
+              >
+                Aisle order <ChevronRight size={15} />
+              </button>
+            </div>
             <div className="list-context">
               <span>
                 {query
@@ -1033,57 +1093,84 @@ function App() {
                 )}
               </div>
             ) : visible.length ? (
-              <ul className="item-list">
-                {visible.map((item) => (
-                  <li
-                    key={item.id}
-                    className={`item-row ${item.bought ? "is-bought" : ""} ${busyItems.has(item.id) ? "is-saving" : ""}`}
+              <div className={grouped ? "category-groups" : "ungrouped-items"}>
+                {displayGroups.map((group) => (
+                  <section
+                    key={group.category ?? "all"}
+                    className="category-group"
+                    aria-label={
+                      grouped
+                        ? `${group.category || "Uncategorized"} items`
+                        : "Shopping items"
+                    }
                   >
-                    <button
-                      className="item-checkbox"
-                      aria-label={`${item.bought ? "Mark not bought" : "Mark bought"}: ${item.name}`}
-                      role="checkbox"
-                      aria-checked={item.bought}
-                      disabled={unavailable || busyItems.has(item.id)}
-                      onClick={() => toggle(item)}
-                    >
-                      {busyItems.has(item.id) ? (
-                        <LoaderCircle size={15} className="spin" />
-                      ) : item.bought ? (
-                        <Check size={16} strokeWidth={2.8} />
-                      ) : null}
-                    </button>
-                    <button
-                      className="item-body"
-                      onClick={() => openModal({ edit: item })}
-                      aria-label={`Edit ${item.name}`}
-                    >
-                      <span className="item-name">
-                        {item.name}
-                        {item.quantity > 1 && (
-                          <span className="quantity-badge">
-                            ×{item.quantity}
+                    {grouped && (
+                      <h3 className="category-heading">
+                        {group.category || "Uncategorized"}
+                        <span>{group.items.length}</span>
+                      </h3>
+                    )}
+                    <ul className="item-list">
+                      {group.items.map((item) => (
+                        <li
+                          key={item.id}
+                          className={`item-row ${item.bought ? "is-bought" : ""} ${busyItems.has(item.id) ? "is-saving" : ""}`}
+                        >
+                          <button
+                            className="item-checkbox"
+                            aria-label={`${item.bought ? "Mark not bought" : "Mark bought"}: ${item.name}`}
+                            role="checkbox"
+                            aria-checked={item.bought}
+                            disabled={unavailable || busyItems.has(item.id)}
+                            onClick={() => toggle(item)}
+                          >
+                            {busyItems.has(item.id) ? (
+                              <LoaderCircle size={15} className="spin" />
+                            ) : item.bought ? (
+                              <Check size={16} strokeWidth={2.8} />
+                            ) : null}
+                          </button>
+                          <button
+                            className="item-body"
+                            onClick={() => openModal({ edit: item })}
+                            aria-label={`Edit ${item.name}`}
+                          >
+                            <span className="item-name">
+                              {item.name}
+                              {item.quantity > 1 && (
+                                <span className="quantity-badge">
+                                  ×{item.quantity}
+                                </span>
+                              )}
+                            </span>
+                            {!grouped && item.category && (
+                              <span className="item-category">
+                                {item.category}
+                              </span>
+                            )}
+                            {item.note && (
+                              <span className="item-note">{item.note}</span>
+                            )}
+                          </button>
+                          <span
+                            className={`store-badge ${item.store.toLowerCase()}`}
+                          >
+                            <StoreMark name={item.store} small />
+                            {item.store}
                           </span>
-                        )}
-                      </span>
-                      {item.note && (
-                        <span className="item-note">{item.note}</span>
-                      )}
-                    </button>
-                    <span className={`store-badge ${item.store.toLowerCase()}`}>
-                      <StoreMark name={item.store} small />
-                      {item.store}
-                    </span>
-                    <button
-                      className="icon-button item-menu"
-                      aria-label={`Options for ${item.name}`}
-                      onClick={() => openModal({ edit: item })}
-                    >
-                      <MoreHorizontal size={20} />
-                    </button>
-                  </li>
+                          <button
+                            className="icon-button item-menu"
+                            aria-label={`Options for ${item.name}`}
+                            onClick={() => openModal({ edit: item })}
+                          >
+                            <MoreHorizontal size={20} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
                 ))}
-              </ul>
+              </div>
             ) : (
               <div className="empty-state">
                 {query ? (
@@ -1170,6 +1257,35 @@ function App() {
         </div>
       )}
 
+      {modal === "aisles" && (
+        <Modal
+          title={`${filter} aisle order`}
+          locked={modalBusy}
+          onClose={() => setModal(null)}
+        >
+          <AisleOrderEditor
+            list={list}
+            store={filter}
+            busy={modalBusy}
+            onSave={async (selectedStore, order, revision) => {
+              setModalBusy(true);
+              try {
+                await mutate(
+                  "/aisle-order",
+                  "PATCH",
+                  { store: selectedStore, order },
+                  { aisleOrder: revision },
+                );
+                changeGrouping(true);
+                setModal(null);
+                setToast("Aisle order saved");
+              } finally {
+                setModalBusy(false);
+              }
+            }}
+          />
+        </Modal>
+      )}
       {modal === "sync" && (
         <Modal title="A little update to review" onClose={() => setModal(null)}>
           <SyncReview

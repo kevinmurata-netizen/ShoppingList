@@ -105,13 +105,17 @@ const fieldNames = {
   note: "Note",
   title: "List name",
   favorite: "Favorite",
+  category: "Category",
+  aisleOrder: "Aisle order",
 };
 const value = (field, entry) =>
-  field === "bought" && typeof entry === "boolean"
-    ? entry
-      ? "Bought"
-      : "To buy"
-    : String(entry ?? "—") || "No note";
+  field === "category" && !entry
+    ? "Uncategorized"
+    : field === "bought" && typeof entry === "boolean"
+      ? entry
+        ? "Bought"
+        : "To buy"
+      : String(entry ?? "—") || "No note";
 export function SyncReview({ issues, waiting, onResolve }) {
   const [busy, setBusy] = useState(null),
     [error, setError] = useState("");

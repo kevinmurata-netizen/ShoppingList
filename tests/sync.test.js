@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { createClient } from "@libsql/client";
 import { createApplication } from "../server/index.js";
 import { createLibsqlStorage } from "../server/storage.js";
+import { CATEGORIES } from "../shared/categories.js";
 import { makeOperation, projectList } from "../shared/operations.js";
 
 const httpTestUrl = process.env.TEST_LIBSQL_HTTP_URL;
@@ -60,6 +61,168 @@ for (const backend of ["sqlite", "libsql", ...(httpTestUrl ? ["http"] : [])])
         send: (operation) => api(url + "/sync", "POST", { operation }),
       };
     }
+
+    test("categories are optional, validated atomically, and kept through purchases, usuals, favorites and restores", async (t) => {
+      const { api, list, url, send } = await fixture(t);
+      const invalid = makeOperation(
+        "pick",
+        {
+          items: [
+            { name: "Milk", category: "Dairy & eggs" },
+            { name: "Mystery" },
+          ],
+        },
+        list,
+      );
+      invalid.items[1].category = "unsupported";
+      assert.equal((await send(invalid)).status, 400);
+      assert.equal((await api(url)).data.items.length, 0);
+      assert.equal(
+        (await api(url + "/items", "POST", { name: "Invalid", category: 1 }))
+          .status,
+        400,
+      );
+      let saved = (
+        await api(url + "/items", "POST", {
+          name: "Milk",
+          category: "Dairy & eggs",
+        })
+      ).data;
+      const item = saved.items[0];
+      assert.equal(item.category, "Dairy & eggs");
+      saved = (
+        await send(makeOperation("favorite", { item, pinned: true }, saved))
+      ).data;
+      assert.equal(saved.favoriteStates[0].category, "Dairy & eggs");
+      saved = (
+        await send(
+          makeOperation(
+            "patch",
+            { itemId: item.id, changes: { bought: true } },
+            saved,
+          ),
+        )
+      ).data;
+      assert.equal(saved.usuals[0].category, "Dairy & eggs");
+      saved = (
+        await api(url + "/pick", "POST", {
+          items: [{ name: "Milk", category: "Beverages" }],
+        })
+      ).data;
+      assert.equal(
+        saved.items[0].category,
+        "Dairy & eggs",
+        "restoring keeps the family's chosen category",
+      );
+      saved = (
+        await api(url + "/items/" + item.id, "PATCH", {
+          category: "",
+          bought: true,
+        })
+      ).data;
+      assert.equal(saved.items[0].category, "");
+      saved = (await api(url + "/completed", "DELETE")).data;
+      assert.equal(saved.usuals[0].category, "");
+      saved = (
+        await send(makeOperation("pick", { items: saved.usuals }, saved))
+      ).data;
+      assert.equal(saved.items[0].category, "");
+      const added = (
+        await api(url + "/pick", "POST", {
+          items: [{ name: "Apples", category: "Fruit" }, { name: "Custom" }],
+        })
+      ).data;
+      assert.equal(
+        added.items.find((item) => item.name === "Apples").category,
+        "Fruit",
+      );
+      assert.equal(
+        added.items.find((item) => item.name === "Custom").category,
+        "",
+      );
+    });
+
+    test("category edits merge with other fields but protect simultaneous changes and removals", async (t) => {
+      const { api, list, url, send } = await fixture(t);
+      const base = (
+        await send(makeOperation("pick", { items: [{ name: "Milk" }] }, list))
+      ).data;
+      const itemId = base.items[0].id;
+      const categorizing = makeOperation(
+        "patch",
+        { itemId, changes: { category: "Dairy & eggs" } },
+        base,
+      );
+      await api(url + "/items/" + itemId, "PATCH", { note: "Whole milk" });
+      let saved = await send(categorizing);
+      assert.equal(saved.status, 200);
+      assert.equal(saved.data.items[0].note, "Whole milk");
+      const removal = makeOperation("delete", { itemId }, saved.data);
+      const stale = makeOperation(
+        "patch",
+        { itemId, changes: { category: "Beverages" } },
+        saved.data,
+      );
+      await api(url + "/items/" + itemId, "PATCH", { category: "Frozen" });
+      const conflict = await send(stale);
+      assert.equal(conflict.status, 409);
+      assert.equal(conflict.data.conflict.fields[0].field, "category");
+      assert.equal((await send(removal)).status, 409);
+      stale.before.category =
+        conflict.data.snapshot.items[0].fieldVersions.category;
+      saved = await send(stale);
+      assert.equal(saved.status, 200);
+      assert.equal(saved.data.items[0].category, "Beverages");
+    });
+
+    test("store aisle orders merge independently, stay private, detect conflicts, and retry exactly once", async (t) => {
+      const { api, list, url, send } = await fixture(t);
+      const reverse = [...CATEGORIES].reverse();
+      const costco = makeOperation(
+        "aisleOrder",
+        { store: "Costco", order: reverse },
+        list,
+      );
+      const safeway = makeOperation(
+        "aisleOrder",
+        { store: "Safeway", order: [...CATEGORIES].sort() },
+        list,
+      );
+      const first = await send(costco);
+      assert.equal(first.status, 200);
+      const saved = await send(safeway);
+      assert.deepEqual(saved.data.categoryOrders.Costco, reverse);
+      assert.deepEqual(saved.data.categoryOrders.Safeway, safeway.order);
+      assert.equal((await send(costco)).data.version, saved.data.version);
+      const mine = makeOperation(
+        "aisleOrder",
+        { store: "Costco", order: CATEGORIES },
+        first.data,
+      );
+      const family = makeOperation(
+        "aisleOrder",
+        { store: "Costco", order: [...CATEGORIES].sort() },
+        first.data,
+      );
+      await send(family);
+      const conflict = await send(mine);
+      assert.equal(conflict.status, 409);
+      assert.equal(conflict.data.conflict.fields[0].field, "aisleOrder");
+      mine.before.aisleOrder = conflict.data.snapshot.aisleRevisions.Costco;
+      const resolved = await send(mine);
+      assert.equal(resolved.status, 200);
+      assert.deepEqual(resolved.data.categoryOrders.Costco, CATEGORIES);
+      const another = (await api("/api/lists", "POST", {})).data;
+      assert.deepEqual(another.categoryOrders, {});
+      const bad = makeOperation(
+        "aisleOrder",
+        { store: "Target", order: CATEGORIES },
+        resolved.data,
+      );
+      bad.order[0] = bad.order[1];
+      assert.equal((await send(bad)).status, 400);
+      assert.equal((await api(url)).data.version, resolved.data.version);
+    });
 
     test("pins are family-shared, isolated by list, and idempotent across retries", async (t) => {
       const { api, list, url, send } = await fixture(t);
@@ -233,7 +396,7 @@ for (const backend of ["sqlite", "libsql", ...(httpTestUrl ? ["http"] : [])])
       assert.equal(result.data.items[0].bought, true);
     });
 
-    test("sync receipts and favorites survive a restart", async () => {
+    test("sync receipts, favorites, categories and aisle orders survive a restart", async () => {
       const directory = await mkdtemp(join(tmpdir(), "family-cart-sync-"));
       const path = join(directory, "shopping.sqlite");
       let current;
@@ -241,10 +404,28 @@ for (const backend of ["sqlite", "libsql", ...(httpTestUrl ? ["http"] : [])])
         current = await fixture(null, path);
         const operation = makeOperation(
           "favorite",
-          { item: { name: "Rice" }, pinned: true },
+          { item: { name: "Rice", category: "Pantry" }, pinned: true },
           current.list,
         );
-        const saved = (await current.send(operation)).data;
+        let saved = (await current.send(operation)).data;
+        saved = (
+          await current.send(
+            makeOperation(
+              "pick",
+              { items: [{ name: "Rice", category: "Pantry" }] },
+              saved,
+            ),
+          )
+        ).data;
+        saved = (
+          await current.send(
+            makeOperation(
+              "aisleOrder",
+              { store: "Costco", order: [...CATEGORIES].reverse() },
+              saved,
+            ),
+          )
+        ).data;
         const token = current.list.token;
         await current.app.close();
         current = null;
@@ -276,6 +457,12 @@ for (const backend of ["sqlite", "libsql", ...(httpTestUrl ? ["http"] : [])])
         const replay = await response.json();
         assert.equal(replay.version, saved.version);
         assert.equal(replay.favoriteStates[0].pinned, true);
+        assert.equal(replay.favoriteStates[0].category, "Pantry");
+        assert.equal(replay.items[0].category, "Pantry");
+        assert.deepEqual(
+          replay.categoryOrders.Costco,
+          [...CATEGORIES].reverse(),
+        );
       } finally {
         if (current) await current.app.close();
         await rm(directory, { recursive: true, force: true });

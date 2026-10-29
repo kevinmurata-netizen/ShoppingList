@@ -9,7 +9,9 @@ A phone-friendly shopping list for a family that’s tired of keeping groceries 
 - Tap the **star** beside an item to pin a family favorite. Favorites have their own tab, appear first in browsing results, retain their store and details, and can be pinned or unpinned offline.
 - Review **Selected** before adding. Items already needed are marked, concurrent family picks do not create extra copies, and bought items can be added again with their details intact.
 - Add an item as soon as you think of it. Costco is the initial default; your last selected store is remembered on your device.
-- Organize by Costco, Walmart, Target, Safeway, or Other; search item names and notes.
+- Organize by Costco, Walmart, Target, Safeway, or Other; search item names, notes, and categories.
+- Give items an optional category (Fruit, Vegetables, Meat & seafood, Dairy & eggs, Snacks, Beverages, Frozen, and more). Catalog picks include categories; quantities, notes, categories and stores stay with repeat purchases.
+- Switch on **Group by category** and set an **Aisle order** for each store or the combined All stores view. Move categories up/down or sort A–Z. Orders are shared with your family and work offline; your grouping toggle is remembered on this device.
 - Add quantities, brands, pack sizes, and other notes. Edit or remove an item.
 - Check off purchases, restore them, or clear all bought items with confirmation.
 - Share one private link with your family. Changes appear live on connected devices, with automatic reconnection and periodic refresh as a fallback.
@@ -30,6 +32,16 @@ The app automatically adds history, favorites, sync receipts, and revision metad
 5. If the family changed the same field, choose **Review changes → Keep family update / Use my change**. Items removed by another family member are not automatically recreated. Dependent edits wait for earlier conflicts to be resolved; unrelated changes can still sync.
 
 Unsent changes exist only on the phone where they were made. Do not clear browser/site data or uninstall the app before they finish syncing. Browser storage must be allowed and have space available. Clearing site data, private browsing cleanup, or browser/OS storage eviction can remove locally cached lists and unsent changes. The app reports storage failures rather than claiming a change was saved. Background syncing while the app is closed is not guaranteed; reopen it to finish syncing.
+
+## Categories and aisle ordering
+
+1. Tap **Item details** while adding a grocery, or tap an existing item, and choose an optional **Category**. Leave **Uncategorized** selected to skip it. Existing items are preserved as Uncategorized until you choose a category. Items picked from Essentials already have one.
+2. Turn on **Group by category** above the shopping list. Both To buy and Bought use the grouping. Empty categories are hidden; Uncategorized always comes last. Items within a category keep their existing order.
+3. Choose a store, then tap **Aisle order**. Use the up/down buttons to match your walk through that store, **Sort A–Z** for alphabetical category order, or **Reset order** for the default. Tap **Save aisle order** to save and turn grouping on.
+4. Each store has a separate shared order. **All stores** has its own combined order. Grouping on/off is remembered on your device, so each family member can choose their view.
+5. Category edits and aisle orders can be saved offline after the list is cached. They sync when the app is open online again. If family members rearrange the same store differently, the existing review prompt lets you choose an order; changes to different stores merge.
+
+Existing databases automatically gain category and aisle-order fields at startup, including purchase history and favorites, without changing family links. Saved offline changes from the previous version remain reviewable and syncable.
 
 ## Develop
 

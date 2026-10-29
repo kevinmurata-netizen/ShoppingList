@@ -1,6 +1,14 @@
-import { itemKey, normalizeName, STORES } from "./items.js";
+import { itemKey, STORES } from "./items.js";
+import { cleanCategory, cleanAisleOrder } from "./categories.js";
 
-export const ITEM_FIELDS = ["name", "store", "quantity", "note", "bought"];
+export const ITEM_FIELDS = [
+  "name",
+  "store",
+  "quantity",
+  "note",
+  "bought",
+  "category",
+];
 export const versionsOf = (item) => item?.fieldVersions || {};
 export const stamped = (versions, fields, revision) => ({
   ...versions,
@@ -32,7 +40,13 @@ export function cleanItem(input) {
     throw new Error("Quantity must be between 1 and 99.");
   if (note === null || note.length > 200)
     throw new Error("Use a note of at most 200 characters.");
-  return { name, store, quantity, note };
+  return {
+    name,
+    store,
+    quantity,
+    note,
+    category: cleanCategory(input?.category),
+  };
 }
 
 export function makeOperation(type, payload, list, id = crypto.randomUUID()) {
@@ -104,6 +118,14 @@ export function makeOperation(type, payload, list, id = crypto.randomUUID()) {
     if (op.title === list.title) return null;
     op.before = { title: payload.before?.title ?? list.titleRevision ?? "" };
     op.label = "List name";
+  } else if (type === "aisleOrder") {
+    op.store = payload.store;
+    op.order = cleanAisleOrder(op.store, payload.order);
+    op.before = {
+      aisleOrder:
+        payload.before?.aisleOrder ?? list.aisleRevisions?.[op.store] ?? "",
+    };
+    op.label = `${op.store} aisle order`;
   } else if (type === "favorite") {
     op.item = cleanItem(payload.item);
     op.pinned = payload.pinned;
@@ -132,6 +154,7 @@ export function projectList(base, operations = []) {
   if (!base) return null;
   let items = base.items.map((item) => ({
     ...item,
+    category: item.category || "",
     fieldVersions: { ...versionsOf(item) },
   }));
   const favorites = new Map(
@@ -143,6 +166,8 @@ export function projectList(base, operations = []) {
   let title = base.title,
     titleRevision = base.titleRevision || "",
     pickResult;
+  const categoryOrders = { ...base.categoryOrders },
+    aisleRevisions = { ...base.aisleRevisions };
   const aliases = new Map();
   const remember = (item, when) =>
     usuals.set(itemKey(item), {
@@ -150,6 +175,7 @@ export function projectList(base, operations = []) {
       store: item.store,
       quantity: item.quantity,
       note: item.note,
+      category: item.category || "",
       lastBought: when || item.boughtAt || item.createdAt,
     });
   for (const op of operations.filter((entry) => entry.status === "queued")) {
@@ -217,6 +243,9 @@ export function projectList(base, operations = []) {
     } else if (op.type === "rename") {
       title = op.title;
       titleRevision = op.id;
+    } else if (op.type === "aisleOrder") {
+      categoryOrders[op.store] = op.order;
+      aisleRevisions[op.store] = op.id;
     } else if (op.type === "favorite") {
       const key = itemKey(op.item),
         current = favorites.get(key);
@@ -232,6 +261,8 @@ export function projectList(base, operations = []) {
     ...base,
     title,
     titleRevision,
+    categoryOrders,
+    aisleRevisions,
     items,
     usuals: [...usuals.values()]
       .sort((a, b) => b.lastBought - a.lastBought)

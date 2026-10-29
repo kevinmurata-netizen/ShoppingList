@@ -113,7 +113,13 @@ export default function CatalogPicker({
     !CATALOG.some(
       (item) => normalizeName(item.name) === normalizeName(customName),
     );
-  const custom = { name: customName, store, quantity: 1, note: "" };
+  const custom = {
+    name: customName,
+    store,
+    quantity: 1,
+    note: "",
+    category: category === "All" ? "" : category,
+  };
   const customSelected = selected.has(itemKey(custom));
 
   function choose(item) {
@@ -129,6 +135,7 @@ export default function CatalogPicker({
           store: item.store,
           quantity: item.quantity || 1,
           note: item.note || "",
+          category: item.category || "",
         });
       return next;
     });

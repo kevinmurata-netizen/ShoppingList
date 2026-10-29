@@ -1,25 +1,30 @@
+import { CATEGORIES } from "../shared/categories.js";
+export { CATEGORIES };
+
 const groups = {
-  Produce: [
+  Fruit: [
     ["Apples"],
     ["Avocados"],
     ["Bananas"],
-    ["Bell peppers"],
     ["Blueberries"],
+    ["Grapes"],
+    ["Lemons"],
+    ["Limes"],
+    ["Oranges"],
+    ["Strawberries"],
+  ],
+  Vegetables: [
+    ["Bell peppers"],
     ["Broccoli"],
     ["Carrots"],
     ["Cucumbers"],
     ["Garlic"],
-    ["Grapes"],
-    ["Lemons"],
     ["Lettuce", "salad greens"],
-    ["Limes"],
     ["Mushrooms"],
     ["Onions"],
-    ["Oranges"],
     ["Potatoes"],
     ["Salad mix"],
     ["Spinach"],
-    ["Strawberries"],
     ["Sweet potatoes"],
     ["Tomatoes"],
   ],
@@ -91,18 +96,20 @@ const groups = {
     ["Ice cream"],
     ["Waffles"],
   ],
-  "Snacks & drinks": [
+  Beverages: [
     ["Bottled water"],
-    ["Chips"],
     ["Coffee"],
+    ["Juice"],
+    ["Sparkling water"],
+    ["Tea"],
+  ],
+  Snacks: [
+    ["Chips"],
     ["Crackers"],
     ["Granola bars"],
-    ["Juice"],
     ["Mixed nuts"],
     ["Popcorn"],
     ["Protein bars"],
-    ["Sparkling water"],
-    ["Tea"],
     ["Trail mix"],
   ],
   Household: [
@@ -132,7 +139,6 @@ const groups = {
   Pets: [["Cat food"], ["Cat litter"], ["Dog food"], ["Pet treats"]],
 };
 
-export const CATEGORIES = Object.keys(groups);
-export const CATALOG = Object.entries(groups).flatMap(([category, entries]) =>
-  entries.map(([name, aliases = ""]) => ({ name, category, aliases })),
+export const CATALOG = CATEGORIES.flatMap((category) =>
+  groups[category].map(([name, aliases = ""]) => ({ name, category, aliases })),
 );

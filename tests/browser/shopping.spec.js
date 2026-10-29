@@ -25,7 +25,7 @@ test("family members share, filter, edit, buy and restore items live on mobile",
     await alice
       .getByRole("textbox", { name: "Item name", exact: true })
       .fill("Paper towels");
-    await alice.getByRole("button", { name: "Quantity & note" }).click();
+    await alice.getByRole("button", { name: "Item details" }).click();
     await alice.getByRole("button", { name: "Increase quantity" }).click();
     await alice
       .getByRole("textbox", { name: "Note for new item" })

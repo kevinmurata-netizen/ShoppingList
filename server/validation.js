@@ -1,4 +1,5 @@
 import { STORES as STORE_NAMES } from "../shared/items.js";
+import { cleanCategory } from "../shared/categories.js";
 const STORES = new Set(STORE_NAMES);
 export class InputError extends Error {}
 export function text(value, field, max, optional = false) {
@@ -30,6 +31,13 @@ export function itemFields(body, partial = false) {
   }
   if (!partial || "note" in body)
     result.note = text(body.note ?? "", "Note", 200, true);
+  if (!partial || "category" in body) {
+    try {
+      result.category = cleanCategory(body.category);
+    } catch (error) {
+      throw new InputError(error.message);
+    }
+  }
   if ("bought" in body) {
     if (typeof body.bought !== "boolean")
       throw new InputError("Bought must be true or false.");

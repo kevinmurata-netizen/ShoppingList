@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { cleanAisleOrder, aisleOrderFor } from "../shared/categories.js";
 import { InputError, itemFields, text } from "./validation.js";
 import { ITEM_FIELDS, stamped, versionsOf } from "../shared/operations.js";
 import { itemKey, normalizeName } from "../shared/items.js";
@@ -12,7 +12,8 @@ function before(op, fields) {
     typeof op.before !== "object" ||
     fields.some(
       (field) =>
-        typeof op.before[field] !== "string" || op.before[field].length > 64,
+        (field !== "category" || op.before[field] !== undefined) &&
+        (typeof op.before[field] !== "string" || op.before[field].length > 64),
     )
   )
     throw new InputError(
@@ -23,12 +24,13 @@ function conflict(message, fields = [], canRetry = true) {
   return { conflict: { message, fields, canRetry } };
 }
 const itemStatement = (token, item) => ({
-  sql: "UPDATE items SET name = ?, store = ?, quantity = ?, note = ?, bought = ?, bought_at = ?, field_versions = ? WHERE id = ? AND list_token = ?",
+  sql: "UPDATE items SET name = ?, store = ?, quantity = ?, note = ?, category = ?, bought = ?, bought_at = ?, field_versions = ? WHERE id = ? AND list_token = ?",
   args: [
     item.name,
     item.store,
     item.quantity,
     item.note,
+    item.category || "",
     Number(item.bought),
     item.boughtAt,
     JSON.stringify(item.fieldVersions),
@@ -88,7 +90,7 @@ export function planSync(op, list, token, remember) {
         };
         working.push(item);
         statements.push({
-          sql: "INSERT INTO items (id, list_token, name, store, quantity, note, created_at, field_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          sql: "INSERT INTO items (id, list_token, name, store, quantity, note, category, created_at, field_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           args: [
             item.id,
             token,
@@ -96,6 +98,7 @@ export function planSync(op, list, token, remember) {
             item.store,
             item.quantity,
             item.note,
+            item.category,
             item.createdAt,
             JSON.stringify(item.fieldVersions),
           ],
@@ -132,7 +135,7 @@ export function planSync(op, list, token, remember) {
     before(op, fields);
     const clashes = fields.filter(
       (field) =>
-        (versionsOf(current)[field] || "") !== op.before[field] &&
+        (versionsOf(current)[field] || "") !== (op.before[field] || "") &&
         (op.type === "delete" || current[field] !== changes[field]),
     );
     if (clashes.length)
@@ -186,7 +189,8 @@ export function planSync(op, list, token, remember) {
       if (
         !item.bought ||
         ITEM_FIELDS.some(
-          (field) => (versionsOf(item)[field] || "") !== target.before[field],
+          (field) =>
+            (versionsOf(item)[field] || "") !== (target.before[field] || ""),
         )
       )
         return conflict(
@@ -212,6 +216,37 @@ export function planSync(op, list, token, remember) {
     statements.push({
       sql: "UPDATE lists SET title = ?, title_revision = ? WHERE token = ?",
       args: [title, op.id, token],
+    });
+  } else if (op.type === "aisleOrder") {
+    let order;
+    try {
+      order = cleanAisleOrder(op.store, op.order);
+    } catch (error) {
+      throw new InputError(error.message);
+    }
+    before(op, ["aisleOrder"]);
+    const current = aisleOrderFor(list, op.store);
+    if (
+      (list.aisleRevisions?.[op.store] || "") !== op.before.aisleOrder &&
+      JSON.stringify(current) !== JSON.stringify(order)
+    )
+      return conflict(
+        "Your family also rearranged these aisles. Choose the order to keep.",
+        [
+          {
+            field: "aisleOrder",
+            mine: order.join(" → "),
+            current: current.join(" → "),
+          },
+        ],
+      );
+    statements.push({
+      sql: "UPDATE lists SET category_orders = ?, aisle_revisions = ? WHERE token = ?",
+      args: [
+        JSON.stringify({ ...list.categoryOrders, [op.store]: order }),
+        JSON.stringify({ ...list.aisleRevisions, [op.store]: op.id }),
+        token,
+      ],
     });
   } else if (op.type === "favorite") {
     const item = itemFields(op.item || {});
@@ -245,8 +280,8 @@ export function planSync(op, list, token, remember) {
       );
     const details = op.pinned && current?.pinned ? current : item;
     statements.push({
-      sql: `INSERT INTO favorite_items (list_token, name_key, store, name, quantity, note, pinned, pinned_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(list_token, name_key, store) DO UPDATE SET name=excluded.name, quantity=excluded.quantity, note=excluded.note, pinned=excluded.pinned, pinned_at=excluded.pinned_at, revision=excluded.revision`,
+      sql: `INSERT INTO favorite_items (list_token, name_key, store, name, quantity, note, category, pinned, pinned_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(list_token, name_key, store) DO UPDATE SET name=excluded.name, quantity=excluded.quantity, note=excluded.note, category=excluded.category, pinned=excluded.pinned, pinned_at=excluded.pinned_at, revision=excluded.revision`,
       args: [
         token,
         normalizeName(details.name),
@@ -254,6 +289,7 @@ export function planSync(op, list, token, remember) {
         details.name,
         details.quantity,
         details.note,
+        details.category || "",
         Number(op.pinned),
         Date.now(),
         op.id,

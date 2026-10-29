@@ -36,6 +36,11 @@ const schema = `
   );
 `;
 const migrations = [
+  ["lists", "category_orders", "TEXT NOT NULL DEFAULT '{}'"],
+  ["lists", "aisle_revisions", "TEXT NOT NULL DEFAULT '{}'"],
+  ["items", "category", "TEXT NOT NULL DEFAULT ''"],
+  ["usual_items", "category", "TEXT NOT NULL DEFAULT ''"],
+  ["favorite_items", "category", "TEXT NOT NULL DEFAULT ''"],
   ["lists", "title_revision", "TEXT NOT NULL DEFAULT ''"],
   ["items", "field_versions", "TEXT NOT NULL DEFAULT '{}'"],
 ];

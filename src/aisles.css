@@ -1,0 +1,153 @@
+.aisle-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border, #e5e6de);
+}
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.group-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #315c49;
+}
+.aisle-toolbar .text-button {
+  min-height: 44px;
+}
+.category-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 15px 22px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #f0f2e9;
+  color: #385441;
+  border-bottom: 1px solid #e5e6de;
+}
+.category-heading span {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+.category-groups {
+  overflow: hidden;
+  border: 1px solid #e3e4d7;
+  border-radius: 12px;
+}
+.category-group .item-list {
+  margin: 0;
+}
+.item-category {
+  display: block;
+  font-size: 11px;
+  color: #647662;
+  margin-top: 4px;
+}
+.category-field select {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 10px;
+  font: inherit;
+  color: inherit;
+  border: 1px solid #d9ddd2;
+  border-radius: 8px;
+  background: #fff;
+}
+.composer-details .category-field {
+  flex: 1;
+  min-width: 145px;
+}
+.composer-details {
+  flex-wrap: wrap;
+}
+.aisle-presets {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.aisle-presets button {
+  min-height: 44px;
+}
+.aisle-order {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border: 1px solid #e2e5db;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.aisle-order li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  min-height: 50px;
+  border-bottom: 1px solid #e8ebe2;
+}
+.aisle-order li:last-child {
+  border-bottom: none;
+}
+.aisle-order .icon-button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.aisle-order .icon-button:disabled {
+  opacity: 0.25;
+}
+.aisle-position {
+  width: 22px;
+  font-size: 11px;
+  color: #81907b;
+  text-align: center;
+}
+.aisle-name {
+  flex: 1;
+  font-size: 13px;
+}
+.aisle-footnote {
+  font-size: 12px;
+  color: #697467;
+  line-height: 1.6;
+  margin: 14px 0 20px;
+}
+@media (max-width: 480px) {
+  .category-heading {
+    padding: 13px 15px;
+  }
+  .composer-details .category-field {
+    flex-basis: calc(100% - 130px);
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.category-groups .item-list {
+  border-radius: 0;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+.category-groups .category-group:last-child .item-list {
+  border-bottom: none;
+}

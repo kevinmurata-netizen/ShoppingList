@@ -1,4 +1,8 @@
-import { makeOperation, projectList } from "../shared/operations.js";
+import {
+  makeOperation,
+  projectList,
+  ITEM_FIELDS,
+} from "../shared/operations.js";
 import { itemKey } from "../shared/items.js";
 
 let database;
@@ -194,10 +198,9 @@ export const offlineStore = {
             "Your family removed this item. Keep the family update, then add it again if you need it.",
           );
         op.before = Object.fromEntries(
-          Object.keys(op.before).map((field) => [
-            field,
-            item?.fieldVersions?.[field] || "",
-          ]),
+          (op.type === "delete" ? ITEM_FIELDS : Object.keys(op.before)).map(
+            (field) => [field, item?.fieldVersions?.[field] || ""],
+          ),
         );
       } else if (op.type === "favorite")
         op.before = {
@@ -206,6 +209,8 @@ export const offlineStore = {
               (item) => itemKey(item) === itemKey(op.item),
             )?.revision || "",
         };
+      else if (op.type === "aisleOrder")
+        op.before = { aisleOrder: current.aisleRevisions?.[op.store] || "" };
       else if (op.type === "rename")
         op.before = { title: current.titleRevision || "" };
       op.status = "queued";

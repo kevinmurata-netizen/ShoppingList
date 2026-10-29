@@ -87,11 +87,14 @@ export async function createApplication({
     return {
       title: list.title,
       titleRevision: list.title_revision || "",
+      categoryOrders: JSON.parse(list.category_orders || "{}"),
+      aisleRevisions: JSON.parse(list.aisle_revisions || "{}"),
       favoriteStates: favorites.map((item) => ({
         name: item.name,
         store: item.store,
         quantity: item.quantity,
         note: item.note,
+        category: item.category || "",
         pinned: Boolean(item.pinned),
         revision: item.revision,
         pinnedAt: item.pinned_at,
@@ -104,6 +107,7 @@ export async function createApplication({
         store: item.store,
         quantity: item.quantity,
         note: item.note,
+        category: item.category || "",
         lastBought: item.last_bought,
       })),
       items: items.map((item) => ({
@@ -112,6 +116,7 @@ export async function createApplication({
         store: item.store,
         quantity: item.quantity,
         note: item.note,
+        category: item.category || "",
         bought: Boolean(item.bought),
         createdAt: item.created_at,
         boughtAt: item.bought_at,
@@ -144,10 +149,10 @@ export async function createApplication({
   }
   function remember(token, item, boughtAt = item.bought_at || Date.now()) {
     return {
-      sql: `INSERT INTO usual_items (list_token, name_key, store, name, quantity, note, last_bought)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO usual_items (list_token, name_key, store, name, quantity, note, category, last_bought)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(list_token, name_key, store) DO UPDATE SET
-          name = excluded.name, quantity = excluded.quantity, note = excluded.note, last_bought = excluded.last_bought`,
+          name = excluded.name, quantity = excluded.quantity, note = excluded.note, category = excluded.category, last_bought = excluded.last_bought`,
       args: [
         token,
         normalizeName(item.name),
@@ -155,6 +160,7 @@ export async function createApplication({
         item.name,
         item.quantity,
         item.note,
+        item.category || "",
         boughtAt,
       ],
     };
@@ -359,7 +365,7 @@ export async function createApplication({
           result.restored++;
         } else {
           statements.push({
-            sql: "INSERT INTO items (id, list_token, name, store, quantity, note, created_at, field_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            sql: "INSERT INTO items (id, list_token, name, store, quantity, note, category, created_at, field_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             args: [
               randomUUID(),
               req.params.token,
@@ -367,6 +373,7 @@ export async function createApplication({
               item.store,
               item.quantity,
               item.note,
+              item.category,
               Date.now(),
               JSON.stringify(stamped({}, ITEM_FIELDS, randomUUID())),
             ],
@@ -397,7 +404,7 @@ export async function createApplication({
         });
       await persist(
         req.params.token,
-        "INSERT INTO items (id, list_token, name, store, quantity, note, created_at, field_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO items (id, list_token, name, store, quantity, note, category, created_at, field_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           randomUUID(),
           req.params.token,
@@ -405,6 +412,7 @@ export async function createApplication({
           item.store,
           item.quantity,
           item.note,
+          item.category,
           Date.now(),
           JSON.stringify(stamped({}, ITEM_FIELDS, randomUUID())),
         ],
@@ -459,12 +467,13 @@ export async function createApplication({
       }
       await persist(
         req.params.token,
-        "UPDATE items SET name = ?, store = ?, quantity = ?, note = ?, bought = ?, bought_at = ?, field_versions = ? WHERE id = ? AND list_token = ?",
+        "UPDATE items SET name = ?, store = ?, quantity = ?, note = ?, category = ?, bought = ?, bought_at = ?, field_versions = ? WHERE id = ? AND list_token = ?",
         [
           item.name,
           item.store,
           item.quantity,
           item.note,
+          item.category || "",
           Number(item.bought),
           boughtAt,
           JSON.stringify(
