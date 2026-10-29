@@ -69,6 +69,8 @@ The code has been tested locally, including its libSQL storage adapter. A succes
 3. On Android: open that link in **Chrome → ⋮ → Add to home screen / Install app**.
 4. Save the family link somewhere you can find again. Anyone with it can view and edit the list; there are no individual accounts or email-based link recovery.
 
+After an update, refresh the app online and wait for **Ready for offline shopping** on each phone. Open **Choose items** and use stars to pin the family's favorites. To check offline setup, turn on airplane mode, reopen the list, and check off a test item. Turn connectivity back on and leave the app open until its pending-change banner clears. If a family member changed the same field, use **Review changes** to choose what to keep. Do not clear site data or uninstall while there are unsynced changes; reopening online is needed to send them to the family.
+
 ## What to expect on free plans
 
 - Render's free service can sleep after inactivity. The first visit can take roughly a minute to wake it. Wait for the page to finish loading before adding items. Ordinary live updates work once it is running.

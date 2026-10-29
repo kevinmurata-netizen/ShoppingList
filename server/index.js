@@ -3,57 +3,17 @@ import helmet from "helmet";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openStorage } from "./storage.js";
-import {
-  STORES as STORE_NAMES,
-  normalizeName,
-  itemKey,
-} from "../shared/items.js";
+import { InputError, text, itemFields } from "./validation.js";
+import { ITEM_FIELDS, stamped } from "../shared/operations.js";
+import { planSync } from "./sync.js";
+import { normalizeName, itemKey } from "../shared/items.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const STORES = new Set(STORE_NAMES);
 const tokenPattern = /^[A-Za-z0-9_-]{32}$/;
-
-class InputError extends Error {}
-function text(value, field, max, optional = false) {
-  if (typeof value !== "string") throw new InputError(`${field} must be text.`);
-  const cleaned = value.trim();
-  if ((!optional && !cleaned) || cleaned.length > max)
-    throw new InputError(
-      `${field} must be ${optional ? "at most" : "between 1 and"} ${max} characters.`,
-    );
-  return cleaned;
-}
-function itemFields(body, partial = false) {
-  const result = {};
-  if (!partial || "name" in body)
-    result.name = text(body.name, "Item name", 100);
-  if (!partial || "store" in body) {
-    result.store = body.store ?? "Costco";
-    if (!STORES.has(result.store))
-      throw new InputError("Choose a supported store.");
-  }
-  if (!partial || "quantity" in body) {
-    result.quantity = body.quantity ?? 1;
-    if (
-      !Number.isInteger(result.quantity) ||
-      result.quantity < 1 ||
-      result.quantity > 99
-    )
-      throw new InputError("Quantity must be between 1 and 99.");
-  }
-  if (!partial || "note" in body)
-    result.note = text(body.note ?? "", "Note", 200, true);
-  if ("bought" in body) {
-    if (typeof body.bought !== "boolean")
-      throw new InputError("Bought must be true or false.");
-    result.bought = body.bought;
-  }
-  return result;
-}
 
 export async function createApplication({
   dbPath = process.env.DATA_PATH || resolve(root, ".data/family-cart.sqlite"),
@@ -117,15 +77,25 @@ export async function createApplication({
     }
     next();
   });
-  app.use(express.json({ limit: "64kb" }));
+  app.use(express.json({ limit: "256kb" }));
 
   const server = createServer(app);
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 });
   async function snapshot(token) {
-    const { list, items, usuals } = await db.readList(token);
+    const { list, items, usuals, favorites } = await db.readList(token);
     if (!list) return null;
     return {
       title: list.title,
+      titleRevision: list.title_revision || "",
+      favoriteStates: favorites.map((item) => ({
+        name: item.name,
+        store: item.store,
+        quantity: item.quantity,
+        note: item.note,
+        pinned: Boolean(item.pinned),
+        revision: item.revision,
+        pinnedAt: item.pinned_at,
+      })),
       version: list.version,
       createdAt: list.created_at,
       updatedAt: list.updated_at,
@@ -145,6 +115,7 @@ export async function createApplication({
         bought: Boolean(item.bought),
         createdAt: item.created_at,
         boughtAt: item.bought_at,
+        fieldVersions: JSON.parse(item.field_versions || "{}"),
       })),
     };
   }
@@ -219,6 +190,24 @@ export async function createApplication({
     await db.prepare("SELECT 1").get();
     res.json({ status: "ok" });
   });
+  app.get("/api/manifest", (req, res) => {
+    const token =
+      typeof req.query.list === "string" && tokenPattern.test(req.query.list)
+        ? req.query.list
+        : null;
+    const built = resolve(root, "dist/manifest.webmanifest");
+    const manifest = JSON.parse(
+      readFileSync(
+        existsSync(built)
+          ? built
+          : resolve(root, "public/manifest.webmanifest"),
+        "utf8",
+      ),
+    );
+    res
+      .type("application/manifest+json")
+      .json({ ...manifest, start_url: token ? `/l/${token}` : "/" });
+  });
 
   // Bound accidental creation loops without storing IP addresses on disk.
   const creations = new Map();
@@ -270,10 +259,49 @@ export async function createApplication({
       const title = text(req.body?.title, "List name", 60);
       await persist(
         req.params.token,
-        "UPDATE lists SET title = ? WHERE token = ?",
-        [title, req.params.token],
+        "UPDATE lists SET title = ?, title_revision = ? WHERE token = ?",
+        [title, randomUUID(), req.params.token],
       );
       await publish(req.params.token, res);
+    }),
+  );
+  app.post(
+    "/api/lists/:token/sync",
+    mutation(async (req, res) => {
+      const op = req.body?.operation;
+      if (!op || typeof op.id !== "string" || !/^[0-9a-f-]{36}$/i.test(op.id))
+        throw new InputError("This saved change is invalid.");
+      const receipt = await db
+        .prepare(
+          "SELECT result FROM sync_receipts WHERE list_token = ? AND operation_id = ?",
+        )
+        .get(req.params.token, op.id);
+      if (receipt)
+        return res.json({
+          ...(await snapshot(req.params.token)),
+          syncResult: JSON.parse(receipt.result),
+        });
+      const current = await snapshot(req.params.token);
+      const plan = planSync(op, current, req.params.token, remember);
+      if (plan.conflict)
+        return res.status(409).json({
+          error: plan.conflict.message,
+          snapshot: current,
+          conflict: plan.conflict,
+        });
+      await persistMany(req.params.token, [
+        ...plan.statements,
+        {
+          sql: "INSERT INTO sync_receipts (list_token, operation_id, result, created_at) VALUES (?, ?, ?, ?)",
+          args: [
+            req.params.token,
+            op.id,
+            JSON.stringify(plan.result),
+            Date.now(),
+          ],
+        },
+      ]);
+      await publish(req.params.token, res, { syncResult: plan.result });
     }),
   );
   app.post(
@@ -315,13 +343,23 @@ export async function createApplication({
         if (previous) {
           statements.push(remember(req.params.token, previous));
           statements.push({
-            sql: "UPDATE items SET bought = 0, bought_at = NULL WHERE id = ? AND list_token = ?",
-            args: [previous.id, req.params.token],
+            sql: "UPDATE items SET bought = 0, bought_at = NULL, field_versions = ? WHERE id = ? AND list_token = ?",
+            args: [
+              JSON.stringify(
+                stamped(
+                  JSON.parse(previous.field_versions || "{}"),
+                  ["bought"],
+                  randomUUID(),
+                ),
+              ),
+              previous.id,
+              req.params.token,
+            ],
           });
           result.restored++;
         } else {
           statements.push({
-            sql: "INSERT INTO items (id, list_token, name, store, quantity, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            sql: "INSERT INTO items (id, list_token, name, store, quantity, note, created_at, field_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             args: [
               randomUUID(),
               req.params.token,
@@ -330,18 +368,17 @@ export async function createApplication({
               item.quantity,
               item.note,
               Date.now(),
+              JSON.stringify(stamped({}, ITEM_FIELDS, randomUUID())),
             ],
           });
           result.added++;
         }
       }
       if (current.length + result.added > 500)
-        return res
-          .status(409)
-          .json({
-            error:
-              "This list is full. Clear some bought items before adding more.",
-          });
+        return res.status(409).json({
+          error:
+            "This list is full. Clear some bought items before adding more.",
+        });
       if (statements.length) await persistMany(req.params.token, statements);
       await publish(req.params.token, res, { pickResult: result });
     }),
@@ -360,7 +397,7 @@ export async function createApplication({
         });
       await persist(
         req.params.token,
-        "INSERT INTO items (id, list_token, name, store, quantity, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO items (id, list_token, name, store, quantity, note, created_at, field_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
           randomUUID(),
           req.params.token,
@@ -369,6 +406,7 @@ export async function createApplication({
           item.quantity,
           item.note,
           Date.now(),
+          JSON.stringify(stamped({}, ITEM_FIELDS, randomUUID())),
         ],
       );
       res.status(201);
@@ -421,7 +459,7 @@ export async function createApplication({
       }
       await persist(
         req.params.token,
-        "UPDATE items SET name = ?, store = ?, quantity = ?, note = ?, bought = ?, bought_at = ? WHERE id = ? AND list_token = ?",
+        "UPDATE items SET name = ?, store = ?, quantity = ?, note = ?, bought = ?, bought_at = ?, field_versions = ? WHERE id = ? AND list_token = ?",
         [
           item.name,
           item.store,
@@ -429,6 +467,17 @@ export async function createApplication({
           item.note,
           Number(item.bought),
           boughtAt,
+          JSON.stringify(
+            stamped(
+              JSON.parse(current.field_versions || "{}"),
+              Object.keys(changes).filter((field) =>
+                field === "bought"
+                  ? Boolean(current.bought) !== item.bought
+                  : current[field] !== item[field],
+              ),
+              randomUUID(),
+            ),
+          ),
           req.params.id,
           req.params.token,
         ],

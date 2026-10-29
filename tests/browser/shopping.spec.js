@@ -219,7 +219,7 @@ test("a missing link has a recovery screen; failed saves preserve the entry", as
   ).toHaveValue("Coffee");
 });
 
-test("home-screen assets are available and offline visits show a connection screen", async ({
+test("home-screen assets are available and the saved family list opens offline", async ({
   page,
   context,
 }) => {
@@ -251,11 +251,14 @@ test("home-screen assets are available and offline visits show a connection scre
   await context.setOffline(true);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Your list is taking a moment." }),
+    page.getByRole("button", { name: "Edit Milk", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Offline · Your saved list is ready", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Item name", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   const cachedApis = await page.evaluate(async () => {
     const keys = await caches.keys();
     const requests = (

@@ -8,6 +8,8 @@ import {
   Search,
   ShoppingBasket,
   Store,
+  Star,
+  WifiOff,
   X,
 } from "lucide-react";
 import { CATALOG, CATEGORIES } from "./catalog.js";
@@ -23,14 +25,29 @@ export default function CatalogPicker({
   initialStore,
   onAdd,
   unavailable,
+  onPin,
+  offline,
 }) {
-  const [mode, setMode] = useState("essentials");
+  const [mode, setMode] = useState(() =>
+    (list.favoriteStates || []).some((item) => item.pinned)
+      ? "favorites"
+      : "essentials",
+  );
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [store, setStore] = useState(initialStore);
   const [usualStore, setUsualStore] = useState("All stores");
   const [selected, setSelected] = useState(new Map());
   const [busy, setBusy] = useState(false);
+  const [pinning, setPinning] = useState(null);
+  const favorites = useMemo(
+    () => (list.favoriteStates || []).filter((item) => item.pinned),
+    [list.favoriteStates],
+  );
+  const favoriteKeys = useMemo(
+    () => new Set(favorites.map(itemKey)),
+    [favorites],
+  );
   const [error, setError] = useState("");
   const usuals = useMemo(() => familyUsuals(list), [list.items, list.usuals]);
   const needed = useMemo(
@@ -60,9 +77,11 @@ export default function CatalogPicker({
   const allEntries =
     mode === "essentials"
       ? CATALOG.map((item) => ({ ...item, store, quantity: 1, note: "" }))
-      : mode === "usuals"
-        ? usuals
-        : [...selected.values()];
+      : mode === "favorites"
+        ? favorites
+        : mode === "usuals"
+          ? usuals
+          : [...selected.values()];
   const entries = allEntries.filter((item) => {
     const searchable = normalizeName(
       `${item.name} ${item.aliases || ""} ${item.category || ""} ${item.note || ""}`,
@@ -72,11 +91,17 @@ export default function CatalogPicker({
       (mode !== "essentials" ||
         category === "All" ||
         item.category === category) &&
-      (mode !== "usuals" ||
+      ((mode !== "usuals" && mode !== "favorites") ||
         usualStore === "All stores" ||
         item.store === usualStore)
     );
   });
+  if (mode !== "selected")
+    entries.sort(
+      (a, b) =>
+        Number(favoriteKeys.has(itemKey(b))) -
+        Number(favoriteKeys.has(itemKey(a))),
+    );
   const picks = [...selected.values()].filter(
     (item) => !needed.has(itemKey(item)),
   );
@@ -109,6 +134,19 @@ export default function CatalogPicker({
     });
   }
 
+  async function pin(item) {
+    const key = itemKey(item);
+    setPinning(key);
+    setError("");
+    try {
+      await onPin(item, !favoriteKeys.has(key));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPinning(null);
+    }
+  }
+
   async function submit() {
     setBusy(true);
     setError("");
@@ -131,6 +169,17 @@ export default function CatalogPicker({
         role="tablist"
         aria-label="Choose items from"
       >
+        <button
+          role="tab"
+          aria-selected={mode === "favorites"}
+          onClick={() => {
+            setMode("favorites");
+            setQuery("");
+          }}
+          disabled={busy}
+        >
+          Favorites <span>{favorites.length}</span>
+        </button>
         <button
           role="tab"
           aria-selected={mode === "essentials"}
@@ -198,7 +247,9 @@ export default function CatalogPicker({
               aria-label={
                 mode === "essentials"
                   ? "Store for catalog items"
-                  : "Filter your usuals by store"
+                  : mode === "favorites"
+                    ? "Filter favorites by store"
+                    : "Filter your usuals by store"
               }
               value={mode === "essentials" ? store : usualStore}
               onChange={(e) =>
@@ -208,7 +259,9 @@ export default function CatalogPicker({
               }
               disabled={busy}
             >
-              {mode === "usuals" && <option>All stores</option>}
+              {(mode === "usuals" || mode === "favorites") && (
+                <option>All stores</option>
+              )}
               {STORES.map((name) => (
                 <option key={name}>{name}</option>
               ))}
@@ -238,13 +291,15 @@ export default function CatalogPicker({
       <div className="catalog-scroll">
         <div className="catalog-results-heading">
           <span>
-            {mode === "usuals"
-              ? "READY FOR ANOTHER RUN"
-              : mode === "selected"
-                ? "YOUR PICKS"
-                : category === "All"
-                  ? "EVERYDAY ESSENTIALS"
-                  : category.toUpperCase()}
+            {mode === "favorites"
+              ? "PINNED FOR THE FAMILY"
+              : mode === "usuals"
+                ? "READY FOR ANOTHER RUN"
+                : mode === "selected"
+                  ? "YOUR PICKS"
+                  : category === "All"
+                    ? "EVERYDAY ESSENTIALS"
+                    : category.toUpperCase()}
           </span>
           <span>
             {entries.length} {entries.length === 1 ? "item" : "items"}
@@ -259,7 +314,7 @@ export default function CatalogPicker({
               const previous = bought.get(key);
               const quantity = previous?.quantity || item.quantity || 1;
               return (
-                <li key={key}>
+                <li key={key} className="catalog-result-row">
                   <label
                     className={`catalog-choice ${checked ? "chosen" : ""} ${onList ? "already-needed" : ""}`}
                   >
@@ -307,6 +362,28 @@ export default function CatalogPicker({
                       ) : null}
                     </span>
                   </label>
+                  <button
+                    className="catalog-favorite-toggle"
+                    aria-label={`${favoriteKeys.has(key) ? "Unpin" : "Pin"} ${item.name} from ${item.store}`}
+                    aria-pressed={favoriteKeys.has(key)}
+                    disabled={busy || pinning === key || unavailable}
+                    onClick={() =>
+                      pin(
+                        previous ||
+                          usuals.find((entry) => itemKey(entry) === key) ||
+                          item,
+                      )
+                    }
+                  >
+                    {pinning === key ? (
+                      <LoaderCircle size={17} className="spin" />
+                    ) : (
+                      <Star
+                        size={18}
+                        fill={favoriteKeys.has(key) ? "currentColor" : "none"}
+                      />
+                    )}
+                  </button>
                 </li>
               );
             })}
@@ -314,7 +391,9 @@ export default function CatalogPicker({
         ) : (
           <div className="catalog-empty">
             <span>
-              {mode === "usuals" ? (
+              {mode === "favorites" ? (
+                <Star size={29} />
+              ) : mode === "usuals" ? (
                 <ShoppingBasket size={29} />
               ) : (
                 <ClipboardList size={29} />
@@ -323,18 +402,22 @@ export default function CatalogPicker({
             <h3>
               {query
                 ? "Nothing here by that name."
-                : mode === "usuals"
-                  ? "Your next trip gets easier."
-                  : "A little planning starts here."}
+                : mode === "favorites"
+                  ? "Keep your go-tos close."
+                  : mode === "usuals"
+                    ? "Your next trip gets easier."
+                    : "A little planning starts here."}
             </h3>
             <p>
               {query
                 ? "Try another search or change the category."
-                : mode === "usuals"
-                  ? "Items you mark bought will be saved here, even after you clear Bought."
-                  : "Check a few essentials or your usuals. You’ll find your selections here."}
+                : mode === "favorites"
+                  ? "Tap the star beside an essential or a usual to pin it here for everyone."
+                  : mode === "usuals"
+                    ? "Items you mark bought will be saved here, even after you clear Bought."
+                    : "Check a few essentials or your usuals. You’ll find your selections here."}
             </p>
-            {mode === "selected" && (
+            {(mode === "selected" || mode === "favorites") && (
               <button
                 className="text-button"
                 onClick={() => {
@@ -373,6 +456,12 @@ export default function CatalogPicker({
         )}
       </div>
       <div className="catalog-footer">
+        {offline && (
+          <p className="catalog-offline-note">
+            <WifiOff size={13} />
+            Saved on this phone. Changes sync when you're back online.
+          </p>
+        )}
         {error && (
           <p className="form-error" role="alert">
             {error}

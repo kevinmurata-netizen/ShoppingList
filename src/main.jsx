@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowDownToLine,
@@ -32,14 +32,13 @@ import {
 import "./styles.css";
 import "./catalog.css";
 import CatalogPicker from "./CatalogPicker.jsx";
-import { STORES } from "../shared/items.js";
+import { STORES, itemKey } from "../shared/items.js";
+import { useFamilyList } from "./useFamilyList.js";
+import { getSyncClient, seedList } from "./sync-client.js";
+import { request } from "./api.js";
+import SyncStatus, { SyncReview } from "./SyncStatus.jsx";
+import "./offline.css";
 
-const emptyList = {
-  title: "Our family list",
-  version: 0,
-  items: [],
-  usuals: [],
-};
 const readSaved = (key) => {
   try {
     return localStorage.getItem(key);
@@ -57,30 +56,6 @@ const saveLocal = (key, value) => {
 function startingToken() {
   const match = location.pathname.match(/^\/l\/([^/]+)\/?$/);
   return match ? match[1] : readSaved("family-cart-list");
-}
-
-async function request(path, options = {}) {
-  let response;
-  try {
-    response = await fetch(path, {
-      ...options,
-      headers: { "Content-Type": "application/json", ...options.headers },
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch {
-    throw new Error(
-      "Couldn’t reach your list. Check your connection and try again.",
-    );
-  }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(
-      data.error || "Couldn’t save that change. Please try again.",
-    );
-    error.status = response.status;
-    throw error;
-  }
-  return data;
 }
 
 function StoreMark({ name, small = false }) {
@@ -245,7 +220,11 @@ function ItemEditor({ item, onSave, onDelete, onClose }) {
     setBusy(true);
     setError("");
     try {
-      await onSave({ name, store, quantity, note });
+      const values = { name: name.trim(), store, quantity, note: note.trim() };
+      const changes = Object.fromEntries(
+        Object.entries(values).filter(([key, value]) => value !== item[key]),
+      );
+      await onSave(changes, item.fieldVersions || {});
       onClose();
     } catch (err) {
       setError(err.message);
@@ -356,10 +335,8 @@ function App() {
   const [token, setToken] = useState(startingToken);
   const tokenRef = useRef(token);
   const creatingRef = useRef(null);
-  const [list, setList] = useState(emptyList);
-  const [loaded, setLoaded] = useState(!token);
-  const [loadError, setLoadError] = useState(null);
-  const [connection, setConnection] = useState(token ? "connecting" : "idle");
+  const sync = useFamilyList(token);
+  const { list, loaded, loadError, connection } = sync;
   const [filter, setFilter] = useState("All stores");
   const [tab, setTab] = useState("needed");
   const [query, setQuery] = useState("");
@@ -379,106 +356,26 @@ function App() {
   const [modal, setModal] = useState(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [rename, setRename] = useState("");
+  const [renameRevision, setRenameRevision] = useState("");
   const [modalBusy, setModalBusy] = useState(false);
   const [modalError, setModalError] = useState("");
   const [busyItems, setBusyItems] = useState(new Set());
   const [installEvent, setInstallEvent] = useState(null);
   const nameRef = useRef(null);
-  const accept = useCallback(
-    (data) =>
-      setList((current) => (data.version >= current.version ? data : current)),
-    [],
-  );
-
   useEffect(() => {
     if (!token) return;
     tokenRef.current = token;
-    saveLocal("family-cart-list", token);
-    history.replaceState(null, "", `/l/${token}`);
-    let stopped = false;
-    let socket;
-    let retryTimer;
-    let retry = 0;
-    let refreshRunning = false;
-    async function refresh() {
-      if (refreshRunning || stopped) return;
-      refreshRunning = true;
-      try {
-        const data = await request(`/api/lists/${token}`);
-        if (!stopped) {
-          accept(data);
-          setLoaded(true);
-          setLoadError(null);
-        }
-      } catch (err) {
-        if (!stopped) {
-          setLoadError({ message: err.message, missing: err.status === 404 });
-          setLoaded(true);
-        }
-      } finally {
-        refreshRunning = false;
-      }
-    }
-    function connect() {
-      if (stopped) return;
-      setConnection("connecting");
-      socket = new WebSocket(
-        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/live/${token}`,
-      );
-      socket.onopen = () => {
-        if (stopped) return;
-        retry = 0;
-        setConnection("live");
-        setLoadError(null);
-        setLoaded(true);
-      };
-      socket.onmessage = (event) => {
-        if (!stopped) {
-          try {
-            accept(JSON.parse(event.data));
-            setLoadError(null);
-            setLoaded(true);
-          } catch {
-            /* Reconnect/refresh repairs an invalid message. */
-          }
-        }
-      };
-      socket.onerror = () => socket.close();
-      socket.onclose = () => {
-        if (stopped) return;
-        setConnection("offline");
-        retryTimer = setTimeout(
-          () => {
-            refresh();
-            connect();
-          },
-          Math.min(1000 * 2 ** retry++, 15_000),
+    if (loaded && !loadError) {
+      saveLocal("family-cart-list", token);
+      document
+        .querySelector('link[rel="manifest"]')
+        ?.setAttribute(
+          "href",
+          `/api/manifest?list=${encodeURIComponent(token)}`,
         );
-      };
     }
-    refresh();
-    connect();
-    const poll = setInterval(refresh, 30_000);
-    const onWake = () => {
-      if (!document.hidden) {
-        refresh();
-        if (!socket || socket.readyState === WebSocket.CLOSED) {
-          clearTimeout(retryTimer);
-          connect();
-        }
-      }
-    };
-    document.addEventListener("visibilitychange", onWake);
-    window.addEventListener("online", onWake);
-    return () => {
-      stopped = true;
-      clearTimeout(retryTimer);
-      clearInterval(poll);
-      socket?.close();
-      document.removeEventListener("visibilitychange", onWake);
-      window.removeEventListener("online", onWake);
-    };
-  }, [token, accept]);
+    history.replaceState(null, "", `/l/${token}`);
+  }, [token, loaded, loadError]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -501,9 +398,9 @@ function App() {
         method: "POST",
         body: JSON.stringify({ title: list.title }),
       })
-        .then((data) => {
+        .then(async (data) => {
+          await seedList(data.token, data);
           tokenRef.current = data.token;
-          accept(data);
           setToken(data.token);
           return data.token;
         })
@@ -512,23 +409,43 @@ function App() {
         });
     return creatingRef.current;
   }
-  async function mutate(path, method, body) {
+  async function mutate(path, method, body, baseline) {
     const id = await ensureList();
-    try {
-      const data = await request(`/api/lists/${id}${path}`, {
-        method,
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
-      accept(data);
-      setError("");
-      return data;
-    } catch (err) {
-      if (err.status === 404)
-        request(`/api/lists/${id}`)
-          .then(accept)
-          .catch(() => {});
-      throw err;
+    let type, payload;
+    if (path === "/pick" || (path === "/items" && method === "POST")) {
+      type = "pick";
+      payload = path === "/pick" ? body : { items: [body] };
+    } else if (path === "/completed") {
+      type = "clear";
+      payload = {};
+    } else if (path === "") {
+      type = "rename";
+      payload = { ...body, before: baseline };
+    } else if (path === "/favorites") {
+      type = "favorite";
+      payload = { ...body, before: baseline };
+    } else {
+      type = method === "DELETE" ? "delete" : "patch";
+      payload = {
+        itemId: path.slice("/items/".length),
+        changes: body,
+        before: baseline,
+      };
     }
+    const data = await getSyncClient(id).enqueue(type, payload);
+    setError("");
+    return data;
+  }
+  async function pinItem(item, pinned) {
+    const current = (list.favoriteStates || []).find(
+      (entry) => itemKey(entry) === itemKey(item),
+    );
+    await mutate(
+      "/favorites",
+      "PATCH",
+      { item, pinned },
+      { favorite: current?.revision || "" },
+    );
   }
   async function addItem(e) {
     e.preventDefault();
@@ -550,7 +467,11 @@ function App() {
       setTab("needed");
       if (filter !== "All stores" && filter !== store) setFilter("All stores");
       setQuery("");
-      setToast("Added to the family list");
+      setToast(
+        connection === "offline"
+          ? "Saved on this phone — will sync when online"
+          : "Added to your list",
+      );
       nameRef.current?.focus();
     } catch (err) {
       setError(err.message);
@@ -586,7 +507,12 @@ function App() {
     if (busyItems.has(item.id)) return;
     setBusyItems((current) => new Set(current).add(item.id));
     try {
-      await mutate(`/items/${item.id}`, "PATCH", { bought: !item.bought });
+      await mutate(
+        `/items/${item.id}`,
+        "PATCH",
+        { bought: !item.bought },
+        item.fieldVersions || {},
+      );
       if (!item.bought) setToast(`${item.name} — in the cart!`);
     } catch (err) {
       setError(err.message);
@@ -632,7 +558,8 @@ function App() {
     ? Math.round((bought.length / list.items.length) * 100)
     : 0;
   const shareUrl = token ? `${location.origin}/l/${token}` : "";
-  const unavailable = !loaded || Boolean(loadError);
+  const unavailable =
+    !loaded || Boolean(loadError) || Boolean(sync.storageError);
 
   return (
     <div className="app-shell">
@@ -748,6 +675,7 @@ function App() {
                   disabled={unavailable}
                   onClick={() => {
                     setRename(list.title);
+                    setRenameRevision(list.titleRevision || "");
                     openModal("rename");
                   }}
                 >
@@ -952,15 +880,7 @@ function App() {
               </button>
             </div>
           )}
-          {connection === "offline" && !loadError && (
-            <div className="connection-banner" role="status">
-              <WifiOff size={16} />
-              <span>
-                Reconnecting… Your list may be out of date. Changes need a
-                connection.
-              </span>
-            </div>
-          )}
+          <SyncStatus sync={sync} onReview={() => openModal("sync")} />
           <section className="shopping-section" aria-label="Shopping items">
             <div className="list-toolbar">
               <div className="tabs" role="tablist" aria-label="Item status">
@@ -1068,9 +988,11 @@ function App() {
                   ? "Live with your family"
                   : connection === "idle"
                     ? "Your family’s next good habit"
-                    : connection === "connecting"
-                      ? "Connecting…"
-                      : "Reconnecting…"}
+                    : connection === "syncing"
+                      ? "Syncing changes…"
+                      : connection === "offline"
+                        ? "Saved on this phone"
+                        : "Connecting…"}
               </span>
             </div>
 
@@ -1122,7 +1044,7 @@ function App() {
                       aria-label={`${item.bought ? "Mark not bought" : "Mark bought"}: ${item.name}`}
                       role="checkbox"
                       aria-checked={item.bought}
-                      disabled={busyItems.has(item.id)}
+                      disabled={unavailable || busyItems.has(item.id)}
                       onClick={() => toggle(item)}
                     >
                       {busyItems.has(item.id) ? (
@@ -1248,6 +1170,15 @@ function App() {
         </div>
       )}
 
+      {modal === "sync" && (
+        <Modal title="A little update to review" onClose={() => setModal(null)}>
+          <SyncReview
+            issues={sync.issues}
+            waiting={sync.waiting}
+            onResolve={(id, choice) => getSyncClient(token).resolve(id, choice)}
+          />
+        </Modal>
+      )}
       {modal === "catalog" && (
         <Modal
           title="What do we need?"
@@ -1260,6 +1191,8 @@ function App() {
             initialStore={filter === "All stores" ? store : filter}
             onAdd={pickItems}
             unavailable={unavailable}
+            onPin={pinItem}
+            offline={connection === "offline"}
           />
         </Modal>
       )}
@@ -1357,7 +1290,12 @@ function App() {
               e.preventDefault();
               setModalBusy(true);
               try {
-                await mutate("", "PATCH", { title: rename });
+                await mutate(
+                  "",
+                  "PATCH",
+                  { title: rename },
+                  { title: renameRevision },
+                );
                 setModal(null);
               } catch (err) {
                 setModalError(err.message);
@@ -1480,8 +1418,8 @@ function App() {
             </div>
           )}
           <p className="share-privacy">
-            An internet connection is needed to load and update your shared
-            list.
+            Open your family list online once before heading out. You can shop
+            offline after that; changes sync when the connection returns.
           </p>
         </Modal>
       )}
@@ -1489,10 +1427,17 @@ function App() {
         <ItemEditor
           item={modal.edit}
           onClose={() => setModal(null)}
-          onSave={(changes) =>
-            mutate(`/items/${modal.edit.id}`, "PATCH", changes)
+          onSave={(changes, baseline) =>
+            mutate(`/items/${modal.edit.id}`, "PATCH", changes, baseline)
           }
-          onDelete={() => mutate(`/items/${modal.edit.id}`, "DELETE")}
+          onDelete={() =>
+            mutate(
+              `/items/${modal.edit.id}`,
+              "DELETE",
+              undefined,
+              modal.edit.fieldVersions || {},
+            )
+          }
         />
       )}
     </div>

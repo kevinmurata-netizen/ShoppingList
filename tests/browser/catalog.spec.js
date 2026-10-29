@@ -202,7 +202,7 @@ test("failed additions preserve checkbox selections; custom items and a small ph
       exact: true,
     })
     .click();
-  await page.route("**/api/lists/*/pick", (route) => route.abort());
+  await page.route("**/api/lists", (route) => route.abort());
   await dialog.getByRole("button", { name: "Add 1 item", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText(
     "Check your connection",
@@ -216,7 +216,7 @@ test("failed additions preserve checkbox selections; custom items and a small ph
   expect(
     await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
   ).toBe(true);
-  await page.unroute("**/api/lists/*/pick");
+  await page.unroute("**/api/lists");
   await dialog.getByRole("button", { name: "Add 1 item", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Edit Birthday candles", exact: true }),
